@@ -1,0 +1,2 @@
+class AihubService:
+    pass
