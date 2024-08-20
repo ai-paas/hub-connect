@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # HUB Connect API
 
 ![GitHub license](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
@@ -117,3 +118,6 @@ HUB Connect API의 발전에 기여해주세요! 다음과 같은 방법으로 �
 ---
 
 ⭐️ 이 프로젝트가 도움이 되었다면 스타를 눌러주세요!
+=======
+# hub-connect
+>>>>>>> e0b6788563dc5b7ca9e4d8c67e03c0b5fedb491f
