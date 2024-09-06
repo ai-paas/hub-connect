@@ -4,6 +4,9 @@
 ![Python version](https://img.shields.io/badge/python-3.10%2B-blue.svg)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.112.1%2B-green.svg)
 
+[![Korean](https://img.shields.io/badge/🇰🇷-한국어%20버전-blue)](README.md) 
+[![English](https://img.shields.io/badge/🇺🇸-English%20Version-green)](README_EN.md)
+
 HUB Connect API는 3rd party 모델을 AI-PaaS에 연결하기 위한 API 서비스입니다.
 직관적인 인터페이스와 풍부한 기능을 통해 AI 개발에 필요한 모델과 데이터를 손쉽게 이용할 수 있습니다.
 
