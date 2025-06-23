@@ -1,13 +1,13 @@
-from fastapi import FastAPI, APIRouter
+from fastapi import FastAPI, APIRouter, Depends
 from fastapi.routing import APIRoute
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.core.config import settings
-from app.api import models, tags
+from app.api import models, tags, storage, auth
 from app.core.logging import logger, LoggingMiddleware
-import logging
+from app.core.auth import get_current_user
 
 app = FastAPI(
     title="HUB Connect API",
@@ -30,7 +30,20 @@ app.add_middleware(
 # Exception handlers
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request, exc):
-    logger.error(f"HTTP error occurred: {exc.detail}")
+    # 404 오류와 Chrome DevTools 관련 요청은 에러 로그에서 제외
+    if exc.status_code == 404 and any(path in str(request.url) for path in [
+        ".well-known/appspecific/com.chrome.devtools.json",
+        "favicon.ico"
+    ]):
+        # 디버그 레벨로만 기록
+        logger.debug(f"Resource not found: {request.url.path}")
+    elif exc.status_code >= 500:
+        # 서버 에러만 ERROR 레벨로 기록
+        logger.error(f"HTTP error occurred: {exc.detail}")
+    else:
+        # 클라이언트 에러는 INFO 레벨로 기록
+        logger.info(f"HTTP {exc.status_code}: {exc.detail}")
+    
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
@@ -51,13 +64,15 @@ async def root():
 prefix_router = APIRouter(prefix="/api/v1")
 
 # Include other routers in the prefix_router
+prefix_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 prefix_router.include_router(models.router, prefix="/models", tags=["models"])
 prefix_router.include_router(tags.router, prefix="/tags", tags=["tags"])
+prefix_router.include_router(storage.router, prefix="/storage", tags=["storage"])
 
 
 # Add a new endpoint to show all routes under /api/v1
 @prefix_router.get("/", summary="Get all API routes")
-async def get_routes():
+async def get_routes(current_user: dict = Depends(get_current_user)):
     logger.info("Retrieving all API routes")
     routes = []
     for route in app.routes:
@@ -83,4 +98,4 @@ async def startup_event():
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    logging.info("Application is shutting down")
+    logger.info("Application is shutting down")

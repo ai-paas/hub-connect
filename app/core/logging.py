@@ -1,9 +1,11 @@
 import logging
 from logging import LogRecord
+from logging.handlers import RotatingFileHandler
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response
 from app.core.config import settings
+import os
 
 
 class RequestInfoFilter(logging.Filter):
@@ -20,6 +22,19 @@ class RequestInfoFilter(logging.Filter):
         return True
 
 
+class SafeFormatter(logging.Formatter):
+    """요청 컨텍스트가 있을 때와 없을 때 모두 안전하게 처리하는 포맷터"""
+    
+    def format(self, record):
+        # request_path와 request_method가 있으면 포함, 없으면 제외
+        if hasattr(record, 'request_path') and record.request_path != 'N/A':
+            self._style._fmt = "%(asctime)s - %(name)s - %(levelname)s - %(message)s - Path: %(request_path)s - Method: %(request_method)s"
+        else:
+            self._style._fmt = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        
+        return super().format(record)
+
+
 class LoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         request_filter.request_info = {
@@ -34,6 +49,15 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             request_filter.request_info["request_body"] = body_str[:1000] + "..." if len(body_str) > 1000 else body_str
 
         response = await call_next(request)
+        
+        # API 요청 로그 기록 (인증된 사용자 정보 포함)
+        user = getattr(request.state, 'user', None)
+        username = user.get('username') if user else None
+        log_api_request(request.method, request.url.path, response.status_code, username)
+        
+        # 요청 처리 후 컨텍스트 정리
+        request_filter.request_info = {}
+        
         return response
 
 
@@ -44,17 +68,72 @@ def get_logging_level(level_name: str) -> int:
 def setup_logging():
     log_level = get_logging_level(settings.LOG_LEVEL)
 
-    logging.basicConfig(
-        level=log_level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s - Path: %(request_path)s - Method: %(request_method)s",
-        handlers=[
-            logging.FileHandler("app.log"),
-            logging.StreamHandler()
-        ]
-    )
-    logger = logging.getLogger(__name__)
+    # logs 디렉토리 생성
+    os.makedirs("logs", exist_ok=True)
+
+    # request_filter 인스턴스 생성
     request_filter = RequestInfoFilter()
-    logger.addFilter(request_filter)
+    
+    # 기본 포맷터
+    formatter = SafeFormatter()
+    
+    # API 호출 전용 포맷터
+    api_formatter = logging.Formatter(
+        "%(asctime)s - %(levelname)s - %(message)s"
+    )
+    
+    # 파일 핸들러들 (로테이션 적용)
+    # 1. 일반 애플리케이션 로그
+    app_handler = RotatingFileHandler(
+        "logs/app.log", 
+        maxBytes=10*1024*1024,  # 10MB
+        backupCount=5
+    )
+    app_handler.setFormatter(formatter)
+    app_handler.setLevel(log_level)
+    
+    # 2. API 호출 로그
+    api_handler = RotatingFileHandler(
+        "logs/api_calls.log",
+        maxBytes=10*1024*1024,  # 10MB
+        backupCount=5
+    )
+    api_handler.setFormatter(api_formatter)
+    api_handler.setLevel(logging.INFO)
+    
+    # 3. 에러 로그
+    error_handler = RotatingFileHandler(
+        "logs/error.log",
+        maxBytes=10*1024*1024,  # 10MB
+        backupCount=5
+    )
+    error_handler.setFormatter(formatter)
+    error_handler.setLevel(logging.ERROR)
+    
+    # 콘솔 핸들러
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    console_handler.setLevel(log_level)
+    
+    # 루트 로거 설정
+    root_logger = logging.getLogger()
+    root_logger.setLevel(log_level)
+    root_logger.handlers.clear()  # 기존 핸들러 제거
+    root_logger.addHandler(app_handler)
+    root_logger.addHandler(error_handler)
+    root_logger.addHandler(console_handler)
+    
+    # API 호출 전용 로거 설정
+    api_logger = logging.getLogger("api_calls")
+    api_logger.setLevel(logging.INFO)
+    api_logger.handlers.clear()
+    api_logger.addHandler(api_handler)
+    api_logger.propagate = False  # 루트 로거로 전파 방지
+    
+    # request_filter를 루트 로거에 적용
+    root_logger.addFilter(request_filter)
+    
+    logger = logging.getLogger(__name__)
     return logger, request_filter
 
 
@@ -63,4 +142,11 @@ logger, request_filter = setup_logging()
 
 # Function to log external API calls
 def log_external_api_call(url: str, method: str, params: dict = None, data: dict = None):
-    logger.info(f"External API Call - URL: {url}, Method: {method}, Params: {params}, Data: {data}")
+    api_logger = logging.getLogger("api_calls")
+    api_logger.info(f"External API Call - URL: {url}, Method: {method}, Params: {params}, Data: {data}")
+
+# Function to log API requests
+def log_api_request(method: str, path: str, status_code: int, user: str = None):
+    api_logger = logging.getLogger("api_calls")
+    user_info = f" - User: {user}" if user else ""
+    api_logger.info(f"API Request - {method} {path} - Status: {status_code}{user_info}")

@@ -1,16 +1,16 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from app.services.caching import cache_data, get_cached_data
 from app.core.config import settings
 from app.services.markets.common import get_market_service
-import logging
+from app.core.auth import get_current_user
+from app.core.logging import logger
 
 router = APIRouter(tags=["tags"])
-logger = logging.getLogger(__name__)
 
 INTERNAL_SERVER_ERROR_MESSAGE = "Internal Server Error"
 
 @router.get("/")
-async def api_tags(market: str = Query(..., description="The market to fetch tags for")):
+async def api_tags(market: str = Query(..., description="The market to fetch tags for"), current_user: dict = Depends(get_current_user)):
     try:
         cache_key = f"{market}_tag_cache"
         data, _ = await get_cached_data(cache_key)
@@ -26,7 +26,7 @@ async def api_tags(market: str = Query(..., description="The market to fetch tag
         raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR_MESSAGE)
 
 @router.get("/{group}")
-async def api_tags_group(market: str, group: str):
+async def api_tags_group(group: str, market: str = Query(..., description="The market to fetch tags for"), current_user: dict = Depends(get_current_user)):
     if group not in settings.GROUPS:
         raise HTTPException(status_code=404, detail="Group not found")
 
@@ -49,7 +49,7 @@ async def api_tags_group(market: str, group: str):
         raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR_MESSAGE)
 
 @router.get("/{group}/all")
-async def api_tags_group_all(market: str, group: str):
+async def api_tags_group_all(group: str, market: str = Query(..., description="The market to fetch tags for"), current_user: dict = Depends(get_current_user)):
     if group not in settings.GROUPS:
         raise HTTPException(status_code=404, detail="Group not found")
 

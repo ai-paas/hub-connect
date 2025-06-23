@@ -123,4 +123,9 @@ class HuggingFaceService:
             logger.error(f"Error in get_model_detail: {str(e)}")
             raise
 
+    def get_tags(self) -> Dict[str, Any]:
+        """Get HuggingFace tags"""
+        from app.services.markets.huggingface.huggingface_tags import get_huggingface_tags
+        return get_huggingface_tags()
+
 huggingface_service = HuggingFaceService()
