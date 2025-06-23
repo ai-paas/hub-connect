@@ -1,9 +1,7 @@
-from app.services.markets.huggingface.huggingface_models import HuggingFaceService
 import logging
 from app.core.config import settings
 from huggingface_hub import HfApi
 
-huggingface_service = HuggingFaceService()
 logger = logging.getLogger(__name__)
 
 hf_api = HfApi(token=settings.HF_API_TOKEN)

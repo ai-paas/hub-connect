@@ -48,7 +48,7 @@ The HUB Connect API is an API service designed to connect third-party models to 
   ```bash
   cp .env.sample .env
   # Open the .env file and modify the necessary settings
-  ## huggingface_token: Hugging Face API token
+  ## HF_API_TOKEN: Hugging Face API token
   ```
   
 3. Install dependencies and run:
@@ -59,7 +59,69 @@ The HUB Connect API is an API service designed to connect third-party models to 
   ```
   
 4. Open your browser and check the API documentation on Swagger UI at `http://localhost:8001/docs`.
-  
+
+## Authentication Setup
+
+HUB Connect API uses JWT-based authentication. All API endpoints require authentication.
+
+### Development Environment (Default)
+
+The development environment configuration is applied by default:
+
+```env
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=admin123
+ADMIN_PASSWORD_HASH=
+```
+
+### Login Method
+
+1. **Obtain Token**:
+   ```bash
+   curl -X 'POST' \
+     'http://localhost:8001/api/v1/auth/login' \
+     -H 'Content-Type: application/x-www-form-urlencoded' \
+     -d 'username=admin&password=admin123'
+   ```
+
+2. **Response Example**:
+   ```json
+   {
+     "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+     "token_type": "bearer"
+   }
+   ```
+
+3. **Use Token in API Calls**:
+   ```bash
+   curl -X 'GET' \
+     'http://localhost:8001/api/v1/models?market=huggingface' \
+     -H 'Authorization: Bearer your_access_token'
+   ```
+
+### Production Environment Setup
+
+For security, use hashed passwords in production:
+
+1. **Generate Password Hash**:
+   ```bash
+   python scripts/generate_password_hash.py your_secure_password
+   ```
+
+2. **Update .env File**:
+   ```env
+   ADMIN_USERNAME=admin
+   # ADMIN_PASSWORD=admin123  # Remove or comment out
+   ADMIN_PASSWORD_HASH=generated_hash_value
+   ```
+
+3. **Login**: Use the original password to login:
+   ```bash
+   curl -X 'POST' \
+     'http://localhost:8001/api/v1/auth/login' \
+     -H 'Content-Type: application/x-www-form-urlencoded' \
+     -d 'username=admin&password=your_secure_password'
+   ```
 
 ## Project Structure
 
@@ -67,12 +129,17 @@ The HUB Connect API is an API service designed to connect third-party models to 
 hub-connect/
 ├── app/
 │   ├── api/
-│   │   ├── models.py
-│   │   └── tags.py
+│   │   ├── auth.py          # JWT Authentication API
+│   │   ├── models.py        # Model Search/Lookup API
+│   │   ├── storage.py       # File Storage API
+│   │   └── tags.py          # Tag Management API
 │   ├── core/
-│   │   ├── config.py
-│   │   └── logging.py
+│   │   ├── auth.py          # Authentication Middleware
+│   │   ├── config.py        # Configuration Management
+│   │   └── logging.py       # Logging System
 │   ├── services/
+│   │   ├── auth_service.py  # Authentication Service
+│   │   ├── storage_service.py # Storage Service
 │   │   ├── markets/
 │   │   │   ├── aihub/
 │   │   │   │   ├── aihub_models.py
@@ -83,12 +150,17 @@ hub-connect/
 │   │   │   └── common.py
 │   │   └── caching.py
 │   ├── utils/
+│   │   ├── error_handlers.py # Error Handling Utilities
 │   │   └── helpers.py
 │   └── main.py
+├── scripts/
+│   └── generate_password_hash.py # Password Hash Generator
 ├── tests/
 ├── .env.sample
 ├── .gitignore
+├── CLAUDE.md           # Developer Guide
 ├── README.md
+├── README_EN.md
 ├── requirements.txt
 └── run.py
 ```

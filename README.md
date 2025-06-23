@@ -47,7 +47,7 @@ HUB Connect API는 3rd party 모델을 AI-PaaS에 연결하기 위한 API 서비
    ```bash
    cp .env.sample .env
    # .env 파일을 열어 필요한 설정을 변경하세요
-   ## huggingface_token: Hugging Face API 토큰
+   ## HF_API_TOKEN: Hugging Face API 토큰
    ```
 
 3. 라이브러리 설치 및 실행:
@@ -58,18 +58,86 @@ HUB Connect API는 3rd party 모델을 AI-PaaS에 연결하기 위한 API 서비
 
 4. 브라우저에서 `http://localhost:8001/docs`를 열어 Swagger UI에서 API 문서를 확인하세요.
 
+## 인증 설정
+
+HUB Connect API는 JWT 기반 인증을 사용합니다. 모든 API 엔드포인트는 인증이 필요합니다.
+
+### 개발 환경 (기본값)
+
+기본적으로 개발 환경용 설정이 적용되어 있습니다:
+
+```env
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=admin123
+ADMIN_PASSWORD_HASH=
+```
+
+### 로그인 방법
+
+1. **토큰 획득**:
+   ```bash
+   curl -X 'POST' \
+     'http://localhost:8001/api/v1/auth/login' \
+     -H 'Content-Type: application/x-www-form-urlencoded' \
+     -d 'username=admin&password=admin123'
+   ```
+
+2. **응답 예시**:
+   ```json
+   {
+     "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+     "token_type": "bearer"
+   }
+   ```
+
+3. **API 호출 시 토큰 사용**:
+   ```bash
+   curl -X 'GET' \
+     'http://localhost:8001/api/v1/models?market=huggingface' \
+     -H 'Authorization: Bearer your_access_token'
+   ```
+
+### 프로덕션 환경 설정
+
+보안을 위해 프로덕션에서는 해시된 비밀번호를 사용하세요:
+
+1. **비밀번호 해시 생성**:
+   ```bash
+   python scripts/generate_password_hash.py your_secure_password
+   ```
+
+2. **.env 파일 업데이트**:
+   ```env
+   ADMIN_USERNAME=admin
+   # ADMIN_PASSWORD=admin123  # 제거 또는 주석 처리
+   ADMIN_PASSWORD_HASH=생성된_해시값
+   ```
+
+3. **로그인**: 원래 비밀번호로 로그인하면 됩니다:
+   ```bash
+   curl -X 'POST' \
+     'http://localhost:8001/api/v1/auth/login' \
+     -H 'Content-Type: application/x-www-form-urlencoded' \
+     -d 'username=admin&password=your_secure_password'
+   ```
+
 ## 프로젝트 구조
 
 ```
 hub-connect/
 ├── app/
 │   ├── api/
-│   │   ├── models.py
-│   │   └── tags.py
+│   │   ├── auth.py          # JWT 인증 API
+│   │   ├── models.py        # 모델 검색/조회 API
+│   │   ├── storage.py       # 파일 저장소 API
+│   │   └── tags.py          # 태그 관리 API
 │   ├── core/
-│   │   ├── config.py
-│   │   └── logging.py
+│   │   ├── auth.py          # 인증 미들웨어
+│   │   ├── config.py        # 설정 관리
+│   │   └── logging.py       # 로깅 시스템
 │   ├── services/
+│   │   ├── auth_service.py  # 인증 서비스
+│   │   ├── storage_service.py # 저장소 서비스
 │   │   ├── markets/
 │   │   │   ├── aihub/  
 │   │   │   │   ├── aihub_models.py
@@ -80,12 +148,17 @@ hub-connect/
 │   │   │   └── common.py
 │   │   └── caching.py
 │   ├── utils/
+│   │   ├── error_handlers.py # 에러 처리 유틸리티
 │   │   └── helpers.py
 │   └── main.py
+├── scripts/
+│   └── generate_password_hash.py # 비밀번호 해시 생성기
 ├── tests/
 ├── .env.sample
 ├── .gitignore
+├── CLAUDE.md           # 개발자 가이드
 ├── README.md
+├── README_EN.md
 ├── requirements.txt
 └── run.py
 ```
