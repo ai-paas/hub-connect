@@ -40,19 +40,23 @@ WORKDIR /app
 # Copy Python packages from builder stage
 COPY --from=builder /root/.local /home/appuser/.local
 
-# Create necessary directories
+# Create necessary directories with proper permissions
 RUN mkdir -p /app/logs /app/data && \
-    chown -R appuser:appuser /app
+    chown -R appuser:appuser /app && \
+    chmod -R 755 /app
 
 # Copy application code
 COPY --chown=appuser:appuser . .
+
+# Ensure proper permissions for logs and data directories after copy
+RUN chmod -R 755 /app/logs /app/data
 
 # Switch to non-root user
 USER appuser
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8001/health || exit 1
+    CMD curl -f http://localhost:8001/ || exit 1
 
 # Expose port
 EXPOSE 8001
