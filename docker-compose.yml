@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  hub-connect-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: hub-connect-api
+    restart: unless-stopped
+    
+    # Port mapping
+    ports:
+      - "8001:8001"
+    
+    # Environment file
+    env_file:
+      - .env
+    
+    # Volume mounts for persistence and logging
+    volumes:
+      # Logs directory for persistent logging
+      - ./logs:/app/logs:rw
+      # Data directory for any persistent data
+      - ./data:/app/data:rw
+      # Mount .env file directly (backup approach)
+      - ./.env:/app/.env:ro
+    
+    # Security options
+    security_opt:
+      - no-new-privileges:true
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    
+    # Labels for management
+    labels:
+      - "traefik.enable=false"
+      - "com.docker.compose.project=hub-connect"
+      - "com.docker.compose.service=api"
