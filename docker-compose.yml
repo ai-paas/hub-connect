@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   hub-connect-api:
     build:
@@ -16,18 +14,11 @@ services:
     env_file:
       - .env
     
-    # Volume mounts for persistence and logging
+    # Volume mounts
     volumes:
-      # Logs directory for persistent logging
-      - ./logs:/app/logs:rw
-      # Data directory for any persistent data
-      - ./data:/app/data:rw
-      # Mount .env file directly (backup approach)
+      - ./logs:/app/logs
+      - ./data:/app/data
       - ./.env:/app/.env:ro
-    
-    # Security options
-    security_opt:
-      - no-new-privileges:true
     
     # Health check
     healthcheck:
@@ -37,15 +28,9 @@ services:
       retries: 3
       start_period: 40s
     
-    # Logging configuration
+    # Logging
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
-    
-    # Labels for management
-    labels:
-      - "traefik.enable=false"
-      - "com.docker.compose.project=hub-connect"
-      - "com.docker.compose.service=api"
