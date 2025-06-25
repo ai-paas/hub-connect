@@ -4,10 +4,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
+import asyncio
+import time
 from app.core.config import settings
 from app.api import models, tags, storage, auth
 from app.core.logging import logger, LoggingMiddleware
 from app.core.auth import get_current_user
+from app.middleware.rate_limit import RateLimitMiddleware
 
 app = FastAPI(
     title="HUB Connect API",
@@ -17,6 +23,35 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
+# Request timeout middleware
+class RequestTimeoutMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app, timeout: int = 300):  # 5분 타임아웃
+        super().__init__(app)
+        self.timeout = timeout
+    
+    async def dispatch(self, request: Request, call_next):
+        try:
+            # 요청에 타임아웃 적용
+            response = await asyncio.wait_for(
+                call_next(request), 
+                timeout=self.timeout
+            )
+            return response
+        except asyncio.TimeoutError:
+            logger.error(f"Request timeout after {self.timeout}s: {request.url}")
+            return JSONResponse(
+                status_code=504, 
+                content={"detail": f"Request timeout after {self.timeout} seconds"}
+            )
+        except Exception as e:
+            logger.error(f"Request error: {str(e)}")
+            return JSONResponse(
+                status_code=500,
+                content={"detail": "Internal server error"}
+            )
+
+app.add_middleware(RequestTimeoutMiddleware, timeout=300)
+app.add_middleware(RateLimitMiddleware, calls=200, period=60)  # 분당 200회 제한
 app.add_middleware(LoggingMiddleware)
 app.add_middleware(
     CORSMiddleware,

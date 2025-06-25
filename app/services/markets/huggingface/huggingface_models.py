@@ -5,10 +5,17 @@ import requests
 import markdown2
 from fastapi.responses import FileResponse
 from huggingface_hub import HfApi, ModelCard, hf_hub_download
+import asyncio
+import functools
 
 from app.core.config import settings
 from app.core.logging import logger, log_external_api_call
 from app.utils.helpers import format_size
+
+# Configure timeouts
+REQUESTS_TIMEOUT = 30  # 30 seconds for HTTP requests
+HF_API_TIMEOUT = 60    # 60 seconds for HuggingFace API calls
+FILE_DOWNLOAD_TIMEOUT = 300  # 5 minutes for file downloads
 
 hf_api = HfApi(token=settings.HF_API_TOKEN)
 
@@ -25,7 +32,7 @@ class HuggingFaceService:
             params["search"] = query
         try:
             log_external_api_call(HUGGINGFACE_MODELS_JSON_URL, "GET", params=params)
-            response = requests.get(HUGGINGFACE_MODELS_JSON_URL, params=params)
+            response = requests.get(HUGGINGFACE_MODELS_JSON_URL, params=params, timeout=REQUESTS_TIMEOUT)
             response.raise_for_status()
             data = response.json()
             models = [model for model in data['models'] if model['repoType'] == 'model']
@@ -45,7 +52,7 @@ class HuggingFaceService:
         }
         try:
             log_external_api_call(HUGGINGFACE_API_MODELS_URL, "GET", params=params)
-            response = requests.get(HUGGINGFACE_API_MODELS_URL, params=params)
+            response = requests.get(HUGGINGFACE_API_MODELS_URL, params=params, timeout=REQUESTS_TIMEOUT)
             response.raise_for_status()
             data = response.json()
 
@@ -59,7 +66,20 @@ class HuggingFaceService:
 
     async def get_model_files(self, model_id: str) -> Dict[str, Any]:
         try:
-            repo_info = hf_api.repo_info(repo_id=model_id, repo_type="model", files_metadata=True)
+            # Run HuggingFace API call with timeout in thread pool
+            loop = asyncio.get_event_loop()
+            repo_info = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None, 
+                    functools.partial(
+                        hf_api.repo_info, 
+                        repo_id=model_id, 
+                        repo_type="model", 
+                        files_metadata=True
+                    )
+                ), 
+                timeout=HF_API_TIMEOUT
+            )
 
             if not hasattr(repo_info, 'siblings') or repo_info.siblings is None:
                 return {"files": []}
@@ -79,7 +99,20 @@ class HuggingFaceService:
 
     async def download_model_file(self, model_id: str, filename: str) -> FileResponse:
         try:
-            local_path = hf_hub_download(repo_id=model_id, filename=filename, token=settings.HF_API_TOKEN)
+            # Run file download with timeout in thread pool
+            loop = asyncio.get_event_loop()
+            local_path = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    functools.partial(
+                        hf_hub_download,
+                        repo_id=model_id,
+                        filename=filename,
+                        token=settings.HF_API_TOKEN
+                    )
+                ),
+                timeout=FILE_DOWNLOAD_TIMEOUT
+            )
             file_name = os.path.basename(local_path)
             return FileResponse(local_path, media_type='application/octet-stream', filename=file_name)
         except Exception as e:
@@ -87,23 +120,49 @@ class HuggingFaceService:
             raise
 
     async def get_model_detail(self, model_id: str) -> Dict[str, Any]:
-        def fetch_model_info():
-            return hf_api.model_info(model_id)
+        async def fetch_model_info():
+            loop = asyncio.get_event_loop()
+            return await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    functools.partial(hf_api.model_info, model_id)
+                ),
+                timeout=HF_API_TIMEOUT
+            )
 
-        def fetch_model_card():
-            card = ModelCard.load(model_id, token=settings.HF_API_TOKEN)
+        async def fetch_model_card():
+            loop = asyncio.get_event_loop()
+            card = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    functools.partial(
+                        ModelCard.load,
+                        model_id,
+                        token=settings.HF_API_TOKEN
+                    )
+                ),
+                timeout=HF_API_TIMEOUT
+            )
             return card.data.to_dict(), card.text
 
         try:
-            with ThreadPoolExecutor(max_workers=2) as executor:
-                future_model_info = executor.submit(fetch_model_info)
-                future_model_card = executor.submit(fetch_model_card)
-
-                for future in as_completed([future_model_info, future_model_card]):
-                    if future == future_model_info:
-                        model_info = future.result()
-                    elif future == future_model_card:
-                        model_data, model_text = future.result()
+            # Run both API calls concurrently with timeout
+            model_info_task = asyncio.create_task(fetch_model_info())
+            model_card_task = asyncio.create_task(fetch_model_card())
+            
+            model_info, (model_data, model_text) = await asyncio.gather(
+                model_info_task,
+                model_card_task,
+                return_exceptions=True
+            )
+            
+            # Handle exceptions
+            if isinstance(model_info, Exception):
+                logger.warning(f"Failed to fetch model info: {model_info}")
+                model_info = None
+            if isinstance(model_data, Exception):
+                logger.warning(f"Failed to fetch model card: {model_data}")
+                model_data, model_text = {}, ""
 
             model_html = markdown2.markdown(model_text, extras=["fenced-code-blocks", "tables"])
 
@@ -123,9 +182,9 @@ class HuggingFaceService:
             logger.error(f"Error in get_model_detail: {str(e)}")
             raise
 
-    def get_tags(self) -> Dict[str, Any]:
+    async def get_tags(self) -> Dict[str, Any]:
         """Get HuggingFace tags"""
         from app.services.markets.huggingface.huggingface_tags import get_huggingface_tags
-        return get_huggingface_tags()
+        return await get_huggingface_tags()
 
 huggingface_service = HuggingFaceService()
