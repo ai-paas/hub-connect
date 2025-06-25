@@ -24,7 +24,7 @@ def main():
     password = sys.argv[1]
     hash_value = get_password_hash(password)
     
-    print(f"비밀번호: {password}")
+    print("비밀번호가 입력되었습니다.")
     print(f"해시값: {hash_value}")
     print()
     print("이 해시값을 .env 파일의 ADMIN_PASSWORD_HASH에 설정하세요:")
