@@ -36,17 +36,35 @@ class SafeFormatter(logging.Formatter):
 
 
 class LoggingMiddleware(BaseHTTPMiddleware):
+    """안전한 로깅 미들웨어 - 바이너리 파일 업로드 지원"""
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         request_filter.request_info = {
             "request_path": request.url.path,
             "request_method": request.method,
         }
 
-        if logger.level <= logging.DEBUG:
+        # DEBUG 레벨일 때만 요청 세부사항 로깅 - 현재는 비활성화
+        # 로그 레벨 확인: logger.level = {logger.level}, DEBUG = {logging.DEBUG}
+        if False and logger.level <= logging.DEBUG:
             request_filter.request_info["request_params"] = str(dict(request.query_params))
-            body = await request.body()
-            body_str = body.decode() if body else ""
-            request_filter.request_info["request_body"] = body_str[:1000] + "..." if len(body_str) > 1000 else body_str
+            
+            # 파일 업로드의 경우 body 로깅을 완전히 스킵
+            content_type = request.headers.get("content-type", "")
+            if content_type and content_type.startswith("multipart/form-data"):
+                request_filter.request_info["request_body"] = "<multipart form data - not logged>"
+            else:
+                try:
+                    body = await request.body()
+                    if body:
+                        # 안전한 디코딩
+                        body_str = body.decode('utf-8', errors='ignore')
+                        body_str = body_str[:1000] + "..." if len(body_str) > 1000 else body_str
+                    else:
+                        body_str = ""
+                    request_filter.request_info["request_body"] = body_str
+                except Exception:
+                    # 모든 예외를 조용히 처리
+                    request_filter.request_info["request_body"] = "<logging skipped>"
 
         response = await call_next(request)
         
