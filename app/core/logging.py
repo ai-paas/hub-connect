@@ -68,8 +68,16 @@ def get_logging_level(level_name: str) -> int:
 def setup_logging():
     log_level = get_logging_level(settings.LOG_LEVEL)
 
-    # logs 디렉토리 생성
-    os.makedirs("logs", exist_ok=True)
+    # logs 디렉토리 생성 시도
+    try:
+        os.makedirs("logs", exist_ok=True)
+        # 디렉토리 쓰기 권한 확인
+        if not os.access("logs", os.W_OK):
+            raise PermissionError("Cannot write to logs directory")
+        use_file_logging = True
+    except (PermissionError, OSError) as e:
+        print(f"Warning: Cannot create or write to logs directory ({e}). Using console logging only.")
+        use_file_logging = False
 
     # request_filter 인스턴스 생성
     request_filter = RequestInfoFilter()
@@ -82,33 +90,43 @@ def setup_logging():
         "%(asctime)s - %(levelname)s - %(message)s"
     )
     
-    # 파일 핸들러들 (로테이션 적용)
-    # 1. 일반 애플리케이션 로그
-    app_handler = RotatingFileHandler(
-        "logs/app.log", 
-        maxBytes=10*1024*1024,  # 10MB
-        backupCount=5
-    )
-    app_handler.setFormatter(formatter)
-    app_handler.setLevel(log_level)
+    file_handlers = []
     
-    # 2. API 호출 로그
-    api_handler = RotatingFileHandler(
-        "logs/api_calls.log",
-        maxBytes=10*1024*1024,  # 10MB
-        backupCount=5
-    )
-    api_handler.setFormatter(api_formatter)
-    api_handler.setLevel(logging.INFO)
-    
-    # 3. 에러 로그
-    error_handler = RotatingFileHandler(
-        "logs/error.log",
-        maxBytes=10*1024*1024,  # 10MB
-        backupCount=5
-    )
-    error_handler.setFormatter(formatter)
-    error_handler.setLevel(logging.ERROR)
+    if use_file_logging:
+        try:
+            # 파일 핸들러들 (로테이션 적용)
+            # 1. 일반 애플리케이션 로그
+            app_handler = RotatingFileHandler(
+                "logs/app.log", 
+                maxBytes=10*1024*1024,  # 10MB
+                backupCount=5
+            )
+            app_handler.setFormatter(formatter)
+            app_handler.setLevel(log_level)
+            
+            # 2. API 호출 로그
+            api_handler = RotatingFileHandler(
+                "logs/api_calls.log",
+                maxBytes=10*1024*1024,  # 10MB
+                backupCount=5
+            )
+            api_handler.setFormatter(api_formatter)
+            api_handler.setLevel(logging.INFO)
+            
+            # 3. 에러 로그
+            error_handler = RotatingFileHandler(
+                "logs/error.log",
+                maxBytes=10*1024*1024,  # 10MB
+                backupCount=5
+            )
+            error_handler.setFormatter(formatter)
+            error_handler.setLevel(logging.ERROR)
+            
+            file_handlers = [app_handler, api_handler, error_handler]
+            
+        except (PermissionError, OSError) as e:
+            print(f"Warning: Cannot create log files ({e}). Using console logging only.")
+            file_handlers = []
     
     # 콘솔 핸들러
     console_handler = logging.StreamHandler()
@@ -119,21 +137,29 @@ def setup_logging():
     root_logger = logging.getLogger()
     root_logger.setLevel(log_level)
     root_logger.handlers.clear()  # 기존 핸들러 제거
-    root_logger.addHandler(app_handler)
-    root_logger.addHandler(error_handler)
+    
+    # 파일 핸들러 추가 (사용 가능한 경우에만)
+    if file_handlers:
+        root_logger.addHandler(file_handlers[0])  # app_handler
+        root_logger.addHandler(file_handlers[2])  # error_handler
+    
     root_logger.addHandler(console_handler)
     
-    # API 호출 전용 로거 설정
-    api_logger = logging.getLogger("api_calls")
-    api_logger.setLevel(logging.INFO)
-    api_logger.handlers.clear()
-    api_logger.addHandler(api_handler)
-    api_logger.propagate = False  # 루트 로거로 전파 방지
+    # API 호출 전용 로거 설정 (파일 핸들러가 있는 경우에만)
+    if file_handlers:
+        api_logger = logging.getLogger("api_calls")
+        api_logger.setLevel(logging.INFO)
+        api_logger.handlers.clear()
+        api_logger.addHandler(file_handlers[1])  # api_handler
+        api_logger.propagate = False  # 루트 로거로 전파 방지
     
     # request_filter를 루트 로거에 적용
     root_logger.addFilter(request_filter)
     
     logger = logging.getLogger(__name__)
+    if not file_handlers:
+        logger.warning("File logging disabled due to permission issues. Using console logging only.")
+    
     return logger, request_filter
 
 
