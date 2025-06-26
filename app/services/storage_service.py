@@ -4,6 +4,7 @@ from botocore.exceptions import ClientError
 from typing import List, Optional, Dict, Any
 from fastapi import UploadFile, HTTPException
 import time
+import asyncio
 from app.core.config import settings
 from app.core.logging import logger
 from app.utils.circuit_breaker import storage_circuit_breaker
@@ -73,75 +74,89 @@ class StorageService:
             if prefix.startswith('/'):
                 prefix = prefix[1:]
 
-            def get_object_info(key: str, is_prefix: bool = False) -> Dict[str, Any]:
-                try:
-                    if is_prefix:
-                        return {
-                            "name": key.rstrip('/').split('/')[-1],
-                            "path": f"/{key}",
-                            "type": "folder",
-                            "size": 4096,  # 폴더 기본 크기
-                            "modified": time.time(),  # 현재 시간을 기본값으로
-                            "children": []
-                        }
-                    else:
-                        obj = self.s3_client.head_object(Bucket=bucket_name, Key=key)
-                        return {
-                            "name": key.split('/')[-1],
-                            "path": f"/{key}",
-                            "type": "file",
-                            "size": obj['ContentLength'],
-                            "modified": obj['LastModified'].timestamp()
-                        }
-                except Exception as e:
-                    logger.error(f"Error getting object info for {key}: {str(e)}")
-                    return None
+            def get_folder_info(key: str) -> Dict[str, Any]:
+                return {
+                    "name": key.rstrip('/').split('/')[-1],
+                    "path": f"/{key}",
+                    "type": "folder",
+                    "size": 4096,
+                    "modified": time.time(),
+                    "children": []
+                }
+            
+            def get_file_info(obj: Dict[str, Any]) -> Dict[str, Any]:
+                key = obj['Key']
+                return {
+                    "name": key.split('/')[-1],
+                    "path": f"/{key}",
+                    "type": "file",
+                    "size": obj['Size'],
+                    "modified": obj['LastModified'].timestamp()
+                }
 
-            def build_tree(prefix: str, current_depth: int) -> List[Dict[str, Any]]:
+            async def build_tree(prefix: str, current_depth: int) -> List[Dict[str, Any]]:
                 if depth is not None and current_depth > depth:
                     return []
 
                 result = []
+                
+                # Use circuit breaker for list_objects_v2 paginate operation with optimized page size
                 paginator = self.s3_client.get_paginator('list_objects_v2')
-
-                for page in paginator.paginate(Bucket=bucket_name, Prefix=prefix, Delimiter='/'):
-                    # 처리 폴더
+                page_iterator = paginator.paginate(
+                    Bucket=bucket_name, 
+                    Prefix=prefix, 
+                    Delimiter='/',
+                    PaginationConfig={'MaxItems': 1000, 'PageSize': 1000}  # Increase page size for fewer API calls
+                )
+                
+                # Process pages sequentially
+                for page in page_iterator:
+                    # Process folders
+                    folder_tasks = []
+                    folder_infos = []
+                    
                     for common_prefix in page.get('CommonPrefixes', []):
                         prefix_path = common_prefix.get('Prefix')
-                        folder_info = get_object_info(prefix_path, True)
-                        if folder_info:
-                            if depth is None or current_depth < depth:
-                                folder_info['children'] = build_tree(prefix_path, current_depth + 1)
+                        folder_info = get_folder_info(prefix_path)
+                        folder_infos.append((folder_info, prefix_path))
+                        
+                        if depth is None or current_depth < depth:
+                            # Recursively build children
+                            folder_tasks.append(build_tree(prefix_path, current_depth + 1))
+                    
+                    # Execute folder children tasks concurrently
+                    if folder_tasks:
+                        children_results = await asyncio.gather(*folder_tasks, return_exceptions=True)
+                        for (folder_info, _), children in zip(folder_infos, children_results):
+                            if isinstance(children, Exception):
+                                logger.error(f"Error building folder children: {children}")
+                                folder_info['children'] = []
                             else:
-                                # depth 제한에 도달했을 때 has_children 확인
-                                try:
-                                    next_level = self.s3_client.list_objects_v2(
-                                        Bucket=bucket_name,
-                                        Prefix=prefix_path,
-                                        MaxKeys=1
-                                    )
-                                    folder_info['has_children'] = 'Contents' in next_level
-                                except:
-                                    folder_info['has_children'] = False
+                                folder_info['children'] = children
                             result.append(folder_info)
-
-                    # 처리 파일
+                    else:
+                        # No children to build, just add folders
+                        for folder_info, _ in folder_infos:
+                            result.append(folder_info)
+                    
+                    # Process files - use data from list_objects_v2 directly (no additional API calls)
                     for obj in page.get('Contents', []):
-                        key = obj['Key']
-                        if not key.endswith('/'):  # 폴더 마커 제외
-                            file_info = get_object_info(key)
-                            if file_info:
-                                result.append(file_info)
+                        if not obj['Key'].endswith('/'):  # Exclude folder markers
+                            file_info = get_file_info(obj)
+                            result.append(file_info)
 
                 return result
 
+            # Build the root tree structure
+            children = await build_tree(prefix, 1)
+            
             root_info = {
                 "name": prefix.rstrip('/').split('/')[-1] if prefix else bucket_name,
                 "path": f"/{prefix}" if prefix else "/",
                 "type": "folder",
                 "size": 4096,
                 "modified": time.time(),
-                "children": build_tree(prefix, 1)
+                "children": children
             }
 
             return root_info

@@ -7,35 +7,54 @@
 [![Korean](https://img.shields.io/badge/🇰🇷-한국어%20버전-blue)](README.md) 
 [![English](https://img.shields.io/badge/🇺🇸-English%20Version-green)](README_EN.md)
 
-HUB Connect API는 3rd party 모델을 AI-PaaS에 연결하기 위한 API 서비스입니다.
-직관적인 인터페이스와 풍부한 기능을 통해 AI 개발에 필요한 모델과 데이터를 손쉽게 이용할 수 있습니다.
+HUB Connect API는 다양한 AI 모델 마켓플레이스(HuggingFace, AI Hub)를 AI-PaaS 플랫폼에 연결하는 통합 API 서비스입니다.
+직관적인 RESTful API와 S3 호환 저장소를 통해 AI 모델의 검색, 다운로드, 저장을 손쉽게 처리할 수 있습니다.
 
 ## 주요 기능
 
-🔍 **모델 검색 및 조회**: HuggingFace 모델을 쉽게 검색하고 상세 정보를 조회할 수 있습니다.
+🔍 **통합 모델 검색**: HuggingFace 등 다중 마켓플레이스에서 AI 모델을 통합 검색하고 상세 정보를 조회할 수 있습니다.
 
-📈 **트렌딩 모델**: 최신 트렌드를 반영한 인기 모델을 확인할 수 있습니다.
+📈 **트렌딩 모델**: 최신 트렌드를 반영한 인기 모델을 실시간으로 확인할 수 있습니다.
 
-🏷️ **태그 관리**: 효율적인 모델 분류와 검색을 위한 태그 시스템을 제공합니다.
+🏷️ **스마트 태그 시스템**: 효율적인 모델 분류와 검색을 위한 계층형 태그 시스템을 제공합니다.
 
-📁 **파일 관리**: 모델 관련 파일을 손쉽게 관리할 수 있습니다.
+☁️ **S3 호환 저장소**: AWS S3, Ceph 등 S3 호환 저장소를 통한 파일 업로드/다운로드/관리 기능을 제공합니다.
 
-🚀 **빠른 통합**: RESTful API를 통해 기존 시스템에 쉽게 통합할 수 있습니다.
+🔐 **JWT 기반 보안**: 강력한 JWT 토큰 기반 인증 시스템으로 안전한 API 액세스를 보장합니다.
+
+⚡ **고성능 비동기 처리**: 모든 I/O 작업을 비동기로 처리하여 높은 성능을 제공합니다.
+
+🛡️ **안정성 보장**: Rate Limiting, Circuit Breaker, Request Timeout 등으로 서비스 안정성을 보장합니다.
+
+🚀 **빠른 통합**: RESTful API와 Docker 지원으로 기존 시스템에 쉽게 통합할 수 있습니다.
 
 ## 지원하는 AI 모델 마켓
 
-| 마켓 이름       | 설명                  | 지원 기능                 | 상태   |
-|-------------|---------------------|-----------------------|------|
-| HuggingFace | 글로벌 AI 모델 및 데이터 마켓  | 모델 검색, 태그 검색, 모델 다운로드 | 지원 중 |
-| AI API Data | 대한민국 AI 모델 및 데이터 마켓 | | 지원 예정 |
+| 마켓 이름       | 설명                  | 지원 기능                        | 상태   |
+|-------------|---------------------|------------------------------|------|
+| HuggingFace | 글로벌 AI 모델 및 데이터 마켓  | 모델 검색, 태그 검색, 모델 다운로드, 트렌딩 모델 | ✅ 완전 지원 |
+| AI Hub      | 대한민국 AI 모델 및 데이터 마켓 | 모델 검색, 태그 검색, 모델 다운로드        | 🚧 개발 중 |
+
+## 기술 스택
+
+| 분야 | 기술 스택 |
+|------|----------|
+| **백엔드** | FastAPI, Python 3.10+, Uvicorn |
+| **인증** | JWT (python-jose), bcrypt |
+| **저장소** | AWS S3, Ceph S3-compatible |
+| **캐싱** | aiocache (In-memory) |
+| **테스트** | pytest, httpx |
+| **배포** | Docker, Docker Compose |
+| **모니터링** | 구조화된 로깅, Health Check |
 
 ## 빠른 시작
 
 ### 전제 조건
 
 - Python 3.10+
+- Docker & Docker Compose (선택사항, 권장)
 
-### 설치 및 실행
+### 방법 1: Docker로 실행 (권장)
 
 1. 리포지토리 클론:
    ```bash
@@ -46,17 +65,39 @@ HUB Connect API는 3rd party 모델을 AI-PaaS에 연결하기 위한 API 서비
 2. 환경 설정:
    ```bash
    cp .env.sample .env
-   # .env 파일을 열어 필요한 설정을 변경하세요
-   ## HF_API_TOKEN: Hugging Face API 토큰
+   # .env 파일 편집하여 필수 설정 추가:
+   # - HF_API_TOKEN: HuggingFace API 토큰
+   # - SECRET_KEY: JWT 시크릿 키
+   # - 저장소 설정 (AWS S3 또는 Ceph)
    ```
 
-3. 라이브러리 설치 및 실행:
+3. Docker로 실행:
+   ```bash
+   docker-compose up -d
+   ```
+
+4. API 문서 확인:
+   - Swagger UI: http://localhost:8001/docs
+   - ReDoc: http://localhost:8001/redoc
+
+### 방법 2: Python으로 직접 실행
+
+1. 리포지토리 클론 및 환경 설정 (위와 동일)
+
+2. 의존성 설치 및 실행:
    ```bash
    pip install -r requirements.txt
    python run.py
    ```
 
-4. 브라우저에서 `http://localhost:8001/docs`를 열어 Swagger UI에서 API 문서를 확인하세요.
+### 초기 로그인
+
+기본 관리자 계정으로 로그인:
+```bash
+curl -X POST http://localhost:8001/api/v1/auth/login \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=admin&password=admin123"
+```
 
 ## 인증 설정
 
@@ -121,52 +162,114 @@ ADMIN_PASSWORD_HASH=
      -d 'username=admin&password=your_secure_password'
    ```
 
+## API 엔드포인트
+
+### 인증
+- `POST /api/v1/auth/login` - JWT 토큰 획득
+
+### 모델 관리
+- `GET /api/v1/models` - 모델 검색/목록 조회
+- `GET /api/v1/models/{id}` - 모델 상세 정보
+- `GET /api/v1/models/{id}/files` - 모델 파일 목록
+- `GET /api/v1/models/{id}/download` - 모델 파일 다운로드
+
+### 태그 관리
+- `GET /api/v1/tags` - 전체 태그 목록
+- `GET /api/v1/tags/{group}` - 그룹별 태그 조회
+
+### 저장소 관리
+- `GET /api/v1/storage` - 저장소 목록
+- `POST /api/v1/storage/{name}/upload` - 파일 업로드
+- `GET /api/v1/storage/{name}/download/{key}` - 파일 다운로드
+- `DELETE /api/v1/storage/{name}/{key}` - 파일 삭제
+
+## 환경 변수 설정
+
+필수 환경 변수:
+```env
+# API 토큰
+HF_API_TOKEN=your_huggingface_token
+SECRET_KEY=your_jwt_secret_key
+
+# 관리자 계정
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=admin123  # 개발용
+ADMIN_PASSWORD_HASH=     # 프로덕션용
+
+# 저장소 설정 (AWS S3 예시)
+STORAGE_TYPE=aws
+AWS_ACCESS_KEY_ID=your_access_key
+AWS_SECRET_ACCESS_KEY=your_secret_key
+AWS_REGION=ap-northeast-2
+AWS_S3_BUCKET=your-bucket-name
+```
+
 ## 프로젝트 구조
 
 ```
 hub-connect/
 ├── app/
-│   ├── api/
-│   │   ├── auth.py          # JWT 인증 API
-│   │   ├── models.py        # 모델 검색/조회 API
-│   │   ├── storage.py       # 파일 저장소 API
-│   │   └── tags.py          # 태그 관리 API
-│   ├── core/
-│   │   ├── auth.py          # 인증 미들웨어
-│   │   ├── config.py        # 설정 관리
-│   │   └── logging.py       # 로깅 시스템
-│   ├── services/
-│   │   ├── auth_service.py  # 인증 서비스
-│   │   ├── storage_service.py # 저장소 서비스
-│   │   ├── markets/
-│   │   │   ├── aihub/  
-│   │   │   │   ├── aihub_models.py
-│   │   │   │   └── aihub_tags.py
-│   │   │   ├── huggingface/
-│   │   │   │   ├── huggingface_models.py
-│   │   │   │   └── huggingface_tags.py
-│   │   │   └── common.py
-│   │   └── caching.py
-│   ├── utils/
-│   │   ├── error_handlers.py # 에러 처리 유틸리티
+│   ├── api/              # API 엔드포인트
+│   │   ├── auth.py       # JWT 인증
+│   │   ├── models.py     # 모델 검색/조회
+│   │   ├── storage.py    # S3 저장소 관리
+│   │   └── tags.py       # 태그 시스템
+│   ├── core/             # 핵심 모듈
+│   │   ├── auth.py       # 인증 미들웨어
+│   │   ├── config.py     # 설정 관리
+│   │   └── logging.py    # 로깅 시스템
+│   ├── services/         # 비즈니스 로직
+│   │   ├── markets/      # 마켓플레이스 통합
+│   │   │   ├── common.py # 팩토리 패턴
+│   │   │   ├── huggingface/ # HF 구현
+│   │   │   └── aihub/    # AIHub 구현
+│   │   ├── auth_service.py
+│   │   ├── storage_service.py
+│   │   ├── caching.py
+│   │   └── upload_tracker.py
+│   ├── utils/            # 유틸리티
+│   │   ├── circuit_breaker.py
+│   │   ├── error_handlers.py
 │   │   └── helpers.py
-│   └── main.py
-├── scripts/
-│   └── generate_password_hash.py # 비밀번호 해시 생성기
-├── tests/
-├── .env.sample
-├── .gitignore
-├── CLAUDE.md           # 개발자 가이드
-├── README.md
-├── README_EN.md
-├── requirements.txt
-└── run.py
+│   ├── middleware/       # 미들웨어
+│   │   └── rate_limit.py
+│   └── main.py           # FastAPI 앱
+├── tests/                # 테스트 코드
+├── scripts/              # 유틸리티 스크립트
+├── logs/                 # 로그 파일
+├── data/                 # 데이터 디렉토리
+├── Dockerfile            # Docker 빌드
+├── docker-compose.yml    # Docker Compose
+├── .env.sample           # 환경 변수 템플릿
+└── requirements.txt      # Python 의존성
 ```
 
 ## API 문서
 
-- Swagger UI: `http://localhost:8001/docs`
-- ReDoc: `http://localhost:8001/redoc`
+- **Swagger UI**: http://localhost:8001/docs - 대화형 API 문서
+- **ReDoc**: http://localhost:8001/redoc - 깔끔한 API 문서
+
+## 모니터링 및 로그
+
+### 로그 파일 위치
+- `logs/app.log` - 애플리케이션 로그
+- `logs/api_calls.log` - API 호출 로그  
+- `logs/error.log` - 에러 로그
+
+### Docker 로그 확인
+```bash
+# 실시간 로그 확인
+docker-compose logs -f hub-connect-api
+
+# 최근 로그 확인
+docker-compose logs --tail=100 hub-connect-api
+```
+
+### 성능 모니터링
+- Rate Limiting: IP당 분당 200회 요청 제한
+- Circuit Breaker: 외부 API 장애 시 자동 차단
+- Request Timeout: 5분 요청 타임아웃
+- Health Check: `/` 엔드포인트를 통한 서비스 상태 확인
 
 ## 기여하기
 

@@ -7,58 +7,96 @@
 [![Korean](https://img.shields.io/badge/🇰🇷-한국어%20버전-blue)](README.md) 
 [![English](https://img.shields.io/badge/🇺🇸-English%20Version-green)](README_EN.md)
 
-The HUB Connect API is an API service designed to connect third-party models to AI-PaaS. It provides an intuitive interface and rich features for easy use of models and data necessary for AI development.
+HUB Connect API is a unified API service that connects various AI model marketplaces (HuggingFace, AI Hub) to AI-PaaS platforms. It provides intuitive RESTful APIs and S3-compatible storage for seamless AI model search, download, and storage operations.
 
-## Main Features
+## Key Features
 
-🔍 **Model Search and Lookup**: Easily search and view detailed information about HuggingFace models.
+🔍 **Unified Model Search**: Integrated search across multiple marketplaces like HuggingFace with detailed model information and metadata.
 
-📈 **Trending Models**: Check out popular models that reflect the latest trends.
+📈 **Trending Models**: Real-time access to popular and trending AI models across supported platforms.
 
-🏷️ **Tag Management**: Provides a tag system for efficient model classification and search.
+🏷️ **Smart Tag System**: Hierarchical tag system for efficient model classification and filtering capabilities.
 
-📁 **File Management**: Manage files related to models easily.
+☁️ **S3-Compatible Storage**: Support for AWS S3, Ceph, and other S3-compatible storage systems for file upload/download/management.
 
-🚀 **Fast Integration**: Easily integrate into existing systems through RESTful API.
+🔐 **JWT Security**: Robust JWT token-based authentication system ensuring secure API access.
+
+⚡ **High-Performance Async**: All I/O operations are asynchronous for optimal performance and scalability.
+
+🛡️ **Reliability Features**: Rate limiting, circuit breaker, request timeout, and other stability mechanisms.
+
+🚀 **Easy Integration**: RESTful API with Docker support for seamless integration into existing systems.
 
 ## Supported AI Model Markets
 
 | Market Name | Description | Supported Features | Status |
-| --- | --- | --- | --- |
-| HuggingFace | Global AI model and data market | Model search, tag search, model download | Supported |
-| AI API Data | Korean AI model and data market |     | Coming Soon |
+|-------------|-------------|-------------------|--------|
+| HuggingFace | Global AI model and data marketplace | Model search, tag search, model download, trending models | ✅ Full Support |
+| AI Hub | Korean AI model and data marketplace | Model search, tag search, model download | 🚧 In Development |
+
+## Technology Stack
+
+| Category | Technologies |
+|----------|-------------|
+| **Backend** | FastAPI, Python 3.10+, Uvicorn |
+| **Authentication** | JWT (python-jose), bcrypt |
+| **Storage** | AWS S3, Ceph S3-compatible |
+| **Caching** | aiocache (In-memory) |
+| **Testing** | pytest, httpx |
+| **Deployment** | Docker, Docker Compose |
+| **Monitoring** | Structured logging, Health checks |
 
 ## Quick Start
 
 ### Prerequisites
 
 - Python 3.10+
+- Docker & Docker Compose (optional, recommended)
 
-### Installation and Execution
+### Method 1: Docker Setup (Recommended)
 
 1. Clone the repository:
-  
-  ```bash
-  git clone https://github.com/ai-paas/hub-connect.git
-  cd hub-connect
-  ```
-  
-2. Set up the environment:
-  
-  ```bash
-  cp .env.sample .env
-  # Open the .env file and modify the necessary settings
-  ## HF_API_TOKEN: Hugging Face API token
-  ```
-  
-3. Install dependencies and run:
-  
-  ```bash
-  pip install -r requirements.txt
-  python run.py
-  ```
-  
-4. Open your browser and check the API documentation on Swagger UI at `http://localhost:8001/docs`.
+   ```bash
+   git clone https://github.com/ai-paas/hub-connect.git
+   cd hub-connect
+   ```
+
+2. Environment configuration:
+   ```bash
+   cp .env.sample .env
+   # Edit .env file with required settings:
+   # - HF_API_TOKEN: HuggingFace API token
+   # - SECRET_KEY: JWT secret key
+   # - Storage settings (AWS S3 or Ceph)
+   ```
+
+3. Run with Docker:
+   ```bash
+   docker-compose up -d
+   ```
+
+4. Access API documentation:
+   - Swagger UI: http://localhost:8001/docs
+   - ReDoc: http://localhost:8001/redoc
+
+### Method 2: Python Direct Execution
+
+1. Clone repository and configure environment (same as above)
+
+2. Install dependencies and run:
+   ```bash
+   pip install -r requirements.txt
+   python run.py
+   ```
+
+### Initial Login
+
+Login with default admin account:
+```bash
+curl -X POST http://localhost:8001/api/v1/auth/login \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=admin&password=admin123"
+```
 
 ## Authentication Setup
 
@@ -123,52 +161,114 @@ For security, use hashed passwords in production:
      -d 'username=admin&password=your_secure_password'
    ```
 
+## API Endpoints
+
+### Authentication
+- `POST /api/v1/auth/login` - Obtain JWT token
+
+### Model Management
+- `GET /api/v1/models` - Search/list models with filtering
+- `GET /api/v1/models/{id}` - Get model details
+- `GET /api/v1/models/{id}/files` - List model files
+- `GET /api/v1/models/{id}/download` - Download model files
+
+### Tag Management
+- `GET /api/v1/tags` - Get all tags
+- `GET /api/v1/tags/{group}` - Get tags by group
+
+### Storage Management
+- `GET /api/v1/storage` - List storage services
+- `POST /api/v1/storage/{name}/upload` - Upload files
+- `GET /api/v1/storage/{name}/download/{key}` - Download files
+- `DELETE /api/v1/storage/{name}/{key}` - Delete files
+
+## Environment Variables
+
+Required environment variables:
+```env
+# API Tokens
+HF_API_TOKEN=your_huggingface_token
+SECRET_KEY=your_jwt_secret_key
+
+# Admin Account
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=admin123  # Development
+ADMIN_PASSWORD_HASH=     # Production
+
+# Storage Configuration (AWS S3 example)
+STORAGE_TYPE=aws
+AWS_ACCESS_KEY_ID=your_access_key
+AWS_SECRET_ACCESS_KEY=your_secret_key
+AWS_REGION=ap-northeast-2
+AWS_S3_BUCKET=your-bucket-name
+```
+
 ## Project Structure
 
 ```
 hub-connect/
 ├── app/
-│   ├── api/
-│   │   ├── auth.py          # JWT Authentication API
-│   │   ├── models.py        # Model Search/Lookup API
-│   │   ├── storage.py       # File Storage API
-│   │   └── tags.py          # Tag Management API
-│   ├── core/
-│   │   ├── auth.py          # Authentication Middleware
-│   │   ├── config.py        # Configuration Management
-│   │   └── logging.py       # Logging System
-│   ├── services/
-│   │   ├── auth_service.py  # Authentication Service
-│   │   ├── storage_service.py # Storage Service
-│   │   ├── markets/
-│   │   │   ├── aihub/
-│   │   │   │   ├── aihub_models.py
-│   │   │   │   └── aihub_tags.py
-│   │   │   ├── huggingface/
-│   │   │   │   ├── huggingface_models.py
-│   │   │   │   └── huggingface_tags.py
-│   │   │   └── common.py
-│   │   └── caching.py
-│   ├── utils/
-│   │   ├── error_handlers.py # Error Handling Utilities
+│   ├── api/              # API endpoints
+│   │   ├── auth.py       # JWT authentication
+│   │   ├── models.py     # Model search/lookup
+│   │   ├── storage.py    # S3 storage management
+│   │   └── tags.py       # Tag system
+│   ├── core/             # Core modules
+│   │   ├── auth.py       # Auth middleware
+│   │   ├── config.py     # Configuration
+│   │   └── logging.py    # Logging system
+│   ├── services/         # Business logic
+│   │   ├── markets/      # Marketplace integration
+│   │   │   ├── common.py # Factory pattern
+│   │   │   ├── huggingface/ # HF implementation
+│   │   │   └── aihub/    # AIHub implementation
+│   │   ├── auth_service.py
+│   │   ├── storage_service.py
+│   │   ├── caching.py
+│   │   └── upload_tracker.py
+│   ├── utils/            # Utilities
+│   │   ├── circuit_breaker.py
+│   │   ├── error_handlers.py
 │   │   └── helpers.py
-│   └── main.py
-├── scripts/
-│   └── generate_password_hash.py # Password Hash Generator
-├── tests/
-├── .env.sample
-├── .gitignore
-├── CLAUDE.md           # Developer Guide
-├── README.md
-├── README_EN.md
-├── requirements.txt
-└── run.py
+│   ├── middleware/       # Middleware
+│   │   └── rate_limit.py
+│   └── main.py           # FastAPI app
+├── tests/                # Test code
+├── scripts/              # Utility scripts
+├── logs/                 # Log files
+├── data/                 # Data directory
+├── Dockerfile            # Docker build
+├── docker-compose.yml    # Docker Compose
+├── .env.sample           # Environment template
+└── requirements.txt      # Python dependencies
 ```
 
 ## API Documentation
 
-- Swagger UI: `http://localhost:8001/docs`
-- ReDoc: `http://localhost:8001/redoc`
+- **Swagger UI**: http://localhost:8001/docs - Interactive API documentation
+- **ReDoc**: http://localhost:8001/redoc - Clean API documentation
+
+## Monitoring and Logs
+
+### Log File Locations
+- `logs/app.log` - Application logs
+- `logs/api_calls.log` - API call logs
+- `logs/error.log` - Error logs
+
+### Docker Log Checking
+```bash
+# Real-time log monitoring
+docker-compose logs -f hub-connect-api
+
+# Recent logs
+docker-compose logs --tail=100 hub-connect-api
+```
+
+### Performance Monitoring
+- Rate Limiting: 200 requests per minute per IP
+- Circuit Breaker: Automatic protection against external API failures
+- Request Timeout: 5-minute request timeout
+- Health Check: Service status check via `/` endpoint
 
 ## Contributing
 
