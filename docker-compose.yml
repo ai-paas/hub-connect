@@ -6,9 +6,8 @@ services:
     container_name: hub-connect-api
     restart: unless-stopped
     
-    # Port mapping
-    ports:
-      - "8001:8001"
+    # Host network mode for better performance
+    network_mode: "host"
     
     # Environment file
     env_file:
