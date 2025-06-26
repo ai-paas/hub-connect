@@ -69,15 +69,52 @@ class StorageService:
             logger.error(f"Error listing buckets: {str(e)}")
             raise HTTPException(status_code=500, detail=str(e))
 
+    async def get_bucket_details(self, bucket_name: str) -> Dict[str, Any]:
+        try:
+            # Check if bucket exists and get creation date
+            try:
+                head_response = await storage_circuit_breaker.call(
+                    lambda: self.s3_client.head_bucket(Bucket=bucket_name)
+                )
+                creation_date = head_response['ResponseMetadata']['HTTPHeaders']['last-modified']
+            except ClientError as e:
+                if e.response['Error']['Code'] == '404':
+                    raise HTTPException(status_code=404, detail=f"Bucket '{bucket_name}' not found")
+                raise
+
+            # Get object count and total size
+            object_count = 0
+            total_size = 0
+            paginator = self.s3_client.get_paginator('list_objects_v2')
+            page_iterator = paginator.paginate(Bucket=bucket_name)
+            for page in page_iterator:
+                if 'Contents' in page:
+                    object_count += len(page['Contents'])
+                    total_size += sum(obj['Size'] for obj in page['Contents'])
+
+            return {
+                "name": bucket_name,
+                "creation_date": creation_date,
+                "object_count": object_count,
+                "size": total_size
+            }
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error getting bucket details for {bucket_name}: {str(e)}")
+            raise HTTPException(status_code=500, detail=str(e))
+
     async def list_objects_as_tree(self, bucket_name: str, prefix: str = "", depth: int = None) -> Dict[str, Any]:
         try:
             if prefix.startswith('/'):
                 prefix = prefix[1:]
 
             def get_folder_info(key: str) -> Dict[str, Any]:
+                # Ensure path is relative and without leading/trailing slashes
+                clean_key = key.strip('/')
                 return {
-                    "name": key.rstrip('/').split('/')[-1],
-                    "path": f"/{key}",
+                    "name": clean_key.split('/')[-1],
+                    "path": clean_key, # Path without leading/trailing slash
                     "type": "folder",
                     "size": 4096,
                     "modified": time.time(),
@@ -85,10 +122,11 @@ class StorageService:
                 }
             
             def get_file_info(obj: Dict[str, Any]) -> Dict[str, Any]:
-                key = obj['Key']
+                # Ensure path is relative and without leading/trailing slashes
+                clean_key = obj['Key'].strip('/')
                 return {
-                    "name": key.split('/')[-1],
-                    "path": f"/{key}",
+                    "name": clean_key.split('/')[-1],
+                    "path": clean_key, # Path without leading/trailing slash
                     "type": "file",
                     "size": obj['Size'],
                     "modified": obj['LastModified'].timestamp()
@@ -152,7 +190,7 @@ class StorageService:
             
             root_info = {
                 "name": prefix.rstrip('/').split('/')[-1] if prefix else bucket_name,
-                "path": f"/{prefix}" if prefix else "/",
+                "path": prefix.rstrip('/'), # Path without leading/trailing slash
                 "type": "folder",
                 "size": 4096,
                 "modified": time.time(),
@@ -245,6 +283,7 @@ class StorageService:
         from concurrent.futures import ThreadPoolExecutor
         
         CHUNK_SIZE = 50 * 1024 * 1024  # 50MB chunks
+        s3_upload_id = None
         
         try:
             # 멀티파트 업로드 시작
@@ -254,9 +293,9 @@ class StorageService:
                     Key=file_location
                 )
             )
-            upload_id = response['UploadId']
+            s3_upload_id = response['UploadId']
             
-            logger.info(f"Started multipart upload for {file_location}, upload_id: {upload_id}")
+            logger.info(f"Started multipart upload for {file_location}, upload_id: {s3_upload_id}")
             
             parts = []
             part_number = 1
@@ -274,7 +313,6 @@ class StorageService:
                 logger.debug(f"Uploading part {part_number}, size: {len(chunk)}")
                 
                 # 각 파트 업로드
-                s3_upload_id = response['UploadId']  # multipart upload의 upload_id
                 part_response = await storage_circuit_breaker.call(
                     lambda: self.s3_client.upload_part(
                         Bucket=bucket_name,
@@ -318,17 +356,18 @@ class StorageService:
             
         except Exception as e:
             # 실패 시 멀티파트 업로드 중단
-            try:
-                await storage_circuit_breaker.call(
-                    lambda: self.s3_client.abort_multipart_upload(
-                        Bucket=bucket_name,
-                        Key=file_location,
-                        UploadId=s3_upload_id
+            if s3_upload_id:
+                try:
+                    await storage_circuit_breaker.call(
+                        lambda: self.s3_client.abort_multipart_upload(
+                            Bucket=bucket_name,
+                            Key=file_location,
+                            UploadId=s3_upload_id
+                        )
                     )
-                )
-                logger.info(f"Aborted multipart upload: {s3_upload_id}")
-            except:
-                pass
+                    logger.info(f"Aborted multipart upload: {s3_upload_id}")
+                except Exception as abort_e:
+                    logger.error(f"Failed to abort multipart upload {s3_upload_id}: {abort_e}")
             raise
 
     async def download_file(self, bucket_name: str, file_key: str) -> bytes:
@@ -399,22 +438,239 @@ class StorageService:
             logger.error(f"Error deleting file: {str(e)}")
             raise
 
+    async def create_folder(self, bucket_name: str, folder_path: str) -> None:
+        """Creates a folder in S3 by creating a zero-byte object with a trailing slash."""
+        if not folder_path.endswith('/'):
+            folder_path += '/'
+        
+        loop = asyncio.get_event_loop()
+        try:
+            logger.info(f"Creating folder: {bucket_name}/{folder_path}")
+            await loop.run_in_executor(
+                None,
+                lambda: self.s3_client.put_object(Bucket=bucket_name, Key=folder_path, Body=b'')
+            )
+        except ClientError as e:
+            logger.error(f"Error creating folder '{folder_path}': {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Could not create folder: {str(e)}")
+
+    async def delete_folder(self, bucket_name: str, folder_path: str) -> None:
+        """Delete a folder and all its contents recursively."""
+        try:
+            if not folder_path.endswith('/'):
+                folder_path += '/'
+            
+            logger.info(f"Deleting folder: {bucket_name}/{folder_path}")
+            
+            # Get all objects with this prefix
+            objects_to_delete = []
+            paginator = self.s3_client.get_paginator('list_objects_v2')
+            page_iterator = paginator.paginate(Bucket=bucket_name, Prefix=folder_path)
+            
+            for page in page_iterator:
+                if 'Contents' in page:
+                    for obj in page['Contents']:
+                        objects_to_delete.append({'Key': obj['Key']})
+            
+            # Delete objects in batches (S3 limit is 1000 per batch)
+            batch_size = 1000
+            for i in range(0, len(objects_to_delete), batch_size):
+                batch = objects_to_delete[i:i + batch_size]
+                if batch:
+                    await storage_circuit_breaker.call(
+                        lambda: self.s3_client.delete_objects(
+                            Bucket=bucket_name,
+                            Delete={'Objects': batch}
+                        )
+                    )
+            
+            logger.info(f"Deleted folder {folder_path} with {len(objects_to_delete)} objects")
+            
+        except ClientError as e:
+            logger.error(f"Error deleting folder '{folder_path}': {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Could not delete folder: {str(e)}")
+
+    async def rename_folder(self, bucket_name: str, old_path: str, new_path: str) -> None:
+        """Rename a folder by copying all objects to new prefix and deleting old ones."""
+        try:
+            if not old_path.endswith('/'):
+                old_path += '/'
+            if not new_path.endswith('/'):
+                new_path += '/'
+            
+            logger.info(f"Renaming folder: {bucket_name}/{old_path} -> {new_path}")
+            
+            # Get all objects with old prefix
+            objects_to_copy = []
+            paginator = self.s3_client.get_paginator('list_objects_v2')
+            page_iterator = paginator.paginate(Bucket=bucket_name, Prefix=old_path)
+            
+            for page in page_iterator:
+                if 'Contents' in page:
+                    for obj in page['Contents']:
+                        old_key = obj['Key']
+                        new_key = new_path + old_key[len(old_path):]
+                        objects_to_copy.append((old_key, new_key))
+            
+            # Copy objects to new location
+            for old_key, new_key in objects_to_copy:
+                await storage_circuit_breaker.call(
+                    lambda: self.s3_client.copy_object(
+                        Bucket=bucket_name,
+                        CopySource={'Bucket': bucket_name, 'Key': old_key},
+                        Key=new_key
+                    )
+                )
+            
+            # Delete old objects
+            objects_to_delete = [{'Key': old_key} for old_key, _ in objects_to_copy]
+            if objects_to_delete:
+                batch_size = 1000
+                for i in range(0, len(objects_to_delete), batch_size):
+                    batch = objects_to_delete[i:i + batch_size]
+                    await storage_circuit_breaker.call(
+                        lambda: self.s3_client.delete_objects(
+                            Bucket=bucket_name,
+                            Delete={'Objects': batch}
+                        )
+                    )
+            
+            logger.info(f"Renamed folder {old_path} to {new_path} ({len(objects_to_copy)} objects)")
+            
+        except ClientError as e:
+            logger.error(f"Error renaming folder '{old_path}' to '{new_path}': {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Could not rename folder: {str(e)}")
+
+    async def copy_folder(self, bucket_name: str, source_path: str, dest_path: str) -> None:
+        """Copy a folder and all its contents to a new location."""
+        try:
+            if not source_path.endswith('/'):
+                source_path += '/'
+            if not dest_path.endswith('/'):
+                dest_path += '/'
+            
+            logger.info(f"Copying folder: {bucket_name}/{source_path} -> {dest_path}")
+            
+            # Get all objects with source prefix
+            objects_to_copy = []
+            paginator = self.s3_client.get_paginator('list_objects_v2')
+            page_iterator = paginator.paginate(Bucket=bucket_name, Prefix=source_path)
+            
+            for page in page_iterator:
+                if 'Contents' in page:
+                    for obj in page['Contents']:
+                        source_key = obj['Key']
+                        dest_key = dest_path + source_key[len(source_path):]
+                        objects_to_copy.append((source_key, dest_key))
+            
+            # Copy objects to destination
+            for source_key, dest_key in objects_to_copy:
+                await storage_circuit_breaker.call(
+                    lambda: self.s3_client.copy_object(
+                        Bucket=bucket_name,
+                        CopySource={'Bucket': bucket_name, 'Key': source_key},
+                        Key=dest_key
+                    )
+                )
+            
+            logger.info(f"Copied folder {source_path} to {dest_path} ({len(objects_to_copy)} objects)")
+            
+        except ClientError as e:
+            logger.error(f"Error copying folder '{source_path}' to '{dest_path}': {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Could not copy folder: {str(e)}")
+
+    async def copy_file(self, bucket_name: str, source_key: str, dest_key: str, dest_bucket: str = None) -> None:
+        """Copy a file to a new location."""
+        try:
+            if dest_bucket is None:
+                dest_bucket = bucket_name
+                
+            logger.info(f"Copying file: {bucket_name}/{source_key} -> {dest_bucket}/{dest_key}")
+            
+            await storage_circuit_breaker.call(
+                lambda: self.s3_client.copy_object(
+                    Bucket=dest_bucket,
+                    CopySource={'Bucket': bucket_name, 'Key': source_key},
+                    Key=dest_key
+                )
+            )
+            
+            logger.info(f"Copied file {source_key} to {dest_key}")
+            
+        except ClientError as e:
+            logger.error(f"Error copying file '{source_key}' to '{dest_key}': {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Could not copy file: {str(e)}")
+
+    async def get_folder_stats(self, bucket_name: str, folder_path: str) -> Dict[str, Any]:
+        """Get statistics for a folder."""
+        try:
+            if not folder_path.endswith('/'):
+                folder_path += '/'
+            
+            total_size = 0
+            file_count = 0
+            folder_count = 0
+            
+            paginator = self.s3_client.get_paginator('list_objects_v2')
+            page_iterator = paginator.paginate(Bucket=bucket_name, Prefix=folder_path)
+            
+            for page in page_iterator:
+                if 'Contents' in page:
+                    for obj in page['Contents']:
+                        if obj['Key'].endswith('/'):
+                            folder_count += 1
+                        else:
+                            file_count += 1
+                            total_size += obj['Size']
+            
+            return {
+                "path": folder_path.rstrip('/'),
+                "total_size": total_size,
+                "file_count": file_count,
+                "folder_count": folder_count
+            }
+            
+        except ClientError as e:
+            logger.error(f"Error getting folder stats for '{folder_path}': {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Could not get folder stats: {str(e)}")
+
     async def create_bucket(self, bucket_name: str) -> bool:
         try:
+            # Validate bucket name
+            if not bucket_name or not bucket_name.strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="Bucket name cannot be empty or None"
+                )
+            
+            bucket_name = bucket_name.strip()
+            
+            # 1. Check if bucket already exists
+            try:
+                await storage_circuit_breaker.call(
+                    lambda: self.s3_client.head_bucket(Bucket=bucket_name)
+                )
+                # If head_bucket succeeds, the bucket exists.
+                raise HTTPException(
+                    status_code=409, # 409 Conflict is more appropriate for existing resources
+                    detail=f"Bucket '{bucket_name}' already exists."
+                )
+            except ClientError as e:
+                # A 404 Not Found error means the bucket does not exist, which is what we want.
+                if e.response['Error']['Code'] != '404':
+                    # For other errors (e.g., permissions), re-raise the exception.
+                    logger.error(f"Error checking bucket existence: {str(e)}")
+                    raise HTTPException(status_code=500, detail=f"Error checking bucket: {str(e)}")
+            
+            # 2. If it does not exist, create it
             logger.info(f"Creating bucket: {bucket_name}")
             await storage_circuit_breaker.call(
                 lambda: self.s3_client.create_bucket(Bucket=bucket_name)
             )
             return True
-        except ClientError as e:
-            logger.error(f"Error creating bucket: {str(e)}")
-            error_code = e.response['Error']['Code']
-            if error_code == 'BucketAlreadyExists':
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Bucket '{bucket_name}' already exists"
-                )
-            raise HTTPException(status_code=500, detail=str(e))
+        except HTTPException as e:
+            # Re-raise HTTPExceptions directly (like the 409 Conflict from the check)
+            raise e
         except Exception as e:
             logger.error(f"Unexpected error creating bucket: {str(e)}")
             raise HTTPException(status_code=500, detail=str(e))
@@ -423,40 +679,111 @@ class StorageService:
         try:
             logger.info(f"Deleting bucket: {bucket_name}")
 
+            # Circuit breaker 없이 직접 호출하여 동기화 문제 해결
+            loop = asyncio.get_event_loop()
+            
             # 버킷 존재 여부 확인
             try:
-                await storage_circuit_breaker.call(
+                await loop.run_in_executor(
+                    None, 
                     lambda: self.s3_client.head_bucket(Bucket=bucket_name)
                 )
+                logger.info(f"Bucket {bucket_name} exists, proceeding with deletion")
             except ClientError as e:
-                if e.response['Error']['Code'] == '404':
+                error_code = e.response['Error']['Code']
+                if error_code in ['404', 'NoSuchBucket']:
                     raise HTTPException(
                         status_code=404,
                         detail=f"Bucket '{bucket_name}' not found"
                     )
+                logger.error(f"Error checking bucket existence: {str(e)}")
                 raise
 
             # 버킷 내 모든 객체 삭제
-            paginator = self.s3_client.get_paginator('list_objects_v2')
-            for page in paginator.paginate(Bucket=bucket_name):
-                if 'Contents' in page:
-                    objects = [{'Key': obj['Key']} for obj in page['Contents']]
-                    await storage_circuit_breaker.call(
+            try:
+                logger.info(f"Listing objects in bucket {bucket_name}")
+                response = await loop.run_in_executor(
+                    None,
+                    lambda: self.s3_client.list_objects_v2(Bucket=bucket_name)
+                )
+                
+                # 객체가 있으면 삭제
+                if 'Contents' in response and response['Contents']:
+                    objects = [{'Key': obj['Key']} for obj in response['Contents']]
+                    logger.info(f"Found {len(objects)} objects to delete from bucket {bucket_name}")
+                    
+                    # 객체 일괄 삭제
+                    await loop.run_in_executor(
+                        None,
                         lambda: self.s3_client.delete_objects(
                             Bucket=bucket_name,
                             Delete={'Objects': objects}
                         )
                     )
+                    logger.info(f"Deleted {len(objects)} objects from bucket {bucket_name}")
+                    
+                    # 객체가 많은 경우 페이지네이션으로 계속 삭제
+                    while response.get('IsTruncated', False):
+                        logger.info(f"Continuing pagination for bucket {bucket_name}")
+                        response = await loop.run_in_executor(
+                            None,
+                            lambda: self.s3_client.list_objects_v2(
+                                Bucket=bucket_name,
+                                ContinuationToken=response['NextContinuationToken']
+                            )
+                        )
+                        if 'Contents' in response and response['Contents']:
+                            objects = [{'Key': obj['Key']} for obj in response['Contents']]
+                            await loop.run_in_executor(
+                                None,
+                                lambda: self.s3_client.delete_objects(
+                                    Bucket=bucket_name,
+                                    Delete={'Objects': objects}
+                                )
+                            )
+                            logger.info(f"Deleted additional {len(objects)} objects from bucket {bucket_name}")
+                else:
+                    logger.info(f"Bucket {bucket_name} is empty, no objects to delete")
+                    
+            except ClientError as e:
+                error_code = e.response['Error']['Code']
+                if error_code == 'NoSuchBucket':
+                    logger.warning(f"Bucket {bucket_name} disappeared during object deletion")
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Bucket '{bucket_name}' not found"
+                    )
+                else:
+                    logger.error(f"Error listing/deleting objects in bucket {bucket_name}: {str(e)}")
+                    raise HTTPException(status_code=500, detail=f"Error deleting objects: {str(e)}")
 
             # 버킷 삭제
-            await storage_circuit_breaker.call(
+            logger.info(f"Deleting empty bucket {bucket_name}")
+            await loop.run_in_executor(
+                None,
                 lambda: self.s3_client.delete_bucket(Bucket=bucket_name)
             )
+            logger.info(f"Successfully deleted bucket {bucket_name}")
             return True
 
+        except HTTPException:
+            # HTTPException은 그대로 재발생
+            raise
         except ClientError as e:
-            logger.error(f"Error deleting bucket: {str(e)}")
-            raise HTTPException(status_code=500, detail=str(e))
+            error_code = e.response['Error']['Code']
+            logger.error(f"S3 ClientError deleting bucket {bucket_name}: {error_code} - {str(e)}")
+            if error_code == 'NoSuchBucket':
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Bucket '{bucket_name}' not found"
+                )
+            elif error_code == 'BucketNotEmpty':
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Bucket '{bucket_name}' is not empty. Please try again."
+                )
+            else:
+                raise HTTPException(status_code=500, detail=f"S3 Error: {str(e)}")
         except Exception as e:
-            logger.error(f"Unexpected error deleting bucket: {str(e)}")
-            raise HTTPException(status_code=500, detail=str(e))
+            logger.error(f"Unexpected error deleting bucket {bucket_name}: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")

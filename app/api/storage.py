@@ -1,146 +1,99 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, validator
 from fastapi.responses import StreamingResponse
 import io
+import re
 
 from app.services.storage_service import StorageService
 from app.core.auth import get_current_user
 from app.core.logging import logger
 from app.services.upload_tracker import upload_tracker
 
-router = APIRouter(tags=["storage"])
+# 통합 스토리지 라우터 (기존 URL 구조 유지)
+buckets_router = APIRouter(prefix="/buckets", tags=["buckets"])
+uploads_router = APIRouter(prefix="/uploads", tags=["uploads"])
 
-# 필요한 최소한의 모델들만 여기서 정의 (기존 패턴 유지)
-class FileRenameRequest(BaseModel):
-    old_name: str
-    new_name: str
-
+# Request/Response 모델들
 class CreateBucketRequest(BaseModel):
-    name: str
+    name: str = Field(..., min_length=3, max_length=63, description="Bucket name (3-63 characters)")
     description: Optional[str] = None
+    
+    @validator('name')
+    def validate_bucket_name(cls, v):
+        if not v or not v.strip():
+            raise ValueError('Bucket name cannot be empty or whitespace only')
+        
+        v = v.strip().lower()  # S3 bucket names should be lowercase
+        
+        # S3 bucket naming rules
+        if not re.match(r'^[a-z0-9][a-z0-9.-]*[a-z0-9]$', v):
+            raise ValueError('Bucket name must start and end with alphanumeric characters and contain only lowercase letters, numbers, hyphens, and periods')
+        
+        if '..' in v or '.-' in v or '-.' in v:
+            raise ValueError('Bucket name cannot contain consecutive periods or period-hyphen combinations')
+            
+        if v.startswith('xn--') or v.endswith('-s3alias'):
+            raise ValueError('Bucket name cannot start with "xn--" or end with "-s3alias"')
+            
+        # Check for IP address format
+        if re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', v):
+            raise ValueError('Bucket name cannot be formatted as an IP address')
+            
+        return v
 
-@router.get("/")
-async def list_storage(
+class ObjectRenameRequest(BaseModel):
+    new_key: str
+
+class CreateFolderRequest(BaseModel):
+    path: str
+
+class RenameFolderRequest(BaseModel):
+    new_path: str
+
+class CopyFolderRequest(BaseModel):
+    destination_path: str
+
+class CopyObjectRequest(BaseModel):
+    destination_key: str
+    destination_bucket: Optional[str] = None  # 같은 버킷이면 None
+
+class BatchOperationRequest(BaseModel):
+    operation: str  # "copy", "move", "delete"
+    items: List[str]  # object keys or folder paths
+    destination: Optional[str] = None  # for copy/move operations
+
+class BucketResponse(BaseModel):
+    id: str
+    name: str
+    creation_date: str
+    object_count: Optional[int] = None
+    size: Optional[int] = None
+
+# ==============================================
+# BUCKET MANAGEMENT APIs
+# ==============================================
+
+@buckets_router.get("")
+async def list_buckets(
     storage_service: StorageService = Depends(StorageService),
     current_user: dict = Depends(get_current_user)
 ) -> List[Dict[str, Any]]:
-    """저장소 목록 조회"""
+    """버킷 목록 조회"""
     try:
-        return await storage_service.list_buckets()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/{storage_name}/files")
-async def list_files(
-    storage_name: str,
-    path: str = Query("", description="Path to the directory"),
-    depth: Optional[int] = Query(None, description="Depth of folder structure to return"),
-    storage_service: StorageService = Depends(StorageService),
-    current_user: dict = Depends(get_current_user)
-) -> Dict[str, Any]:
-    """저장소 내 파일 목록을 트리 구조로 조회"""
-    try:
-        return await storage_service.list_objects_as_tree(storage_name, path, depth)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.post("/{storage_name}/upload")
-async def upload_file(
-    storage_name: str,
-    file: UploadFile = File(...),
-    prefix: str = Query("", description="업로드 경로"),
-    storage_service: StorageService = Depends(StorageService),
-    current_user: dict = Depends(get_current_user)
-) -> Dict[str, Any]:
-    """파일 업로드 (대용량 파일 지원)"""
-    try:
-        result = await storage_service.upload_file(storage_name, file, prefix)
-        return {
-            "success": True,
-            "message": "File uploaded successfully",
-            "file_url": result["file_url"],
-            "upload_id": result["upload_id"],
-            "file_size": file.size,
-            "filename": file.filename
-        }
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        logger.error(f"Error in upload_file: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.get("/{storage_name}/download/{file_key:path}")
-async def download_file(
-        storage_name: str,
-        file_key: str,
-        storage_service: StorageService = Depends(StorageService),
-        current_user: dict = Depends(get_current_user)
-):
-    """파일 다운로드"""
-    try:
-        content = await storage_service.download_file(storage_name, file_key)
-
-        # 파일 확장자로부터 미디어 타입 추정
-        content_type = "application/octet-stream"
-        if file_key.lower().endswith(('.png', '.jpg', '.jpeg')):
-            content_type = "image/jpeg" if file_key.lower().endswith('.jpg') or file_key.lower().endswith(
-                '.jpeg') else "image/png"
-        elif file_key.lower().endswith('.pdf'):
-            content_type = "application/pdf"
-
-        return StreamingResponse(
-            io.BytesIO(content),
-            media_type=content_type,
-            headers={
-                "Content-Disposition": f"attachment; filename={file_key.split('/')[-1]}"
+        buckets = await storage_service.list_buckets()
+        return [
+            {
+                "id": bucket["name"],
+                "name": bucket["name"],
+                "creation_date": bucket["creation_date"]
             }
-        )
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        logger.error(f"Error in download_file: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.put("/{storage_name}/rename")
-async def rename_file(
-    storage_name: str,
-    request: FileRenameRequest,
-    storage_service: StorageService = Depends(StorageService),
-    current_user: dict = Depends(get_current_user)
-) -> Dict[str, Any]:
-    """파일 이름 변경"""
-    try:
-        await storage_service.rename_file(
-            storage_name,
-            request.old_name,
-            request.new_name
-        )
-        return {
-            "success": True,
-            "message": "File renamed successfully"
-        }
+            for bucket in buckets
+        ]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.delete("/{storage_name}/{file_key:path}")
-async def delete_file(
-    storage_name: str,
-    file_key: str,
-    storage_service: StorageService = Depends(StorageService),
-    current_user: dict = Depends(get_current_user)
-) -> Dict[str, Any]:
-    """파일 삭제"""
-    try:
-        await storage_service.delete_file(storage_name, file_key)
-        return {
-            "success": True,
-            "message": "File deleted successfully"
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@router.post("/bucket")
+@buckets_router.post("")
 async def create_bucket(
     request: CreateBucketRequest,
     storage_service: StorageService = Depends(StorageService),
@@ -150,35 +103,329 @@ async def create_bucket(
     try:
         await storage_service.create_bucket(request.name)
         return {
-            "success": True,
+            "id": request.name,
+            "name": request.name,
             "message": f"Bucket '{request.name}' created successfully"
         }
     except HTTPException as e:
         raise e
+    except ValueError as e:
+        # Handle validation errors from pydantic
+        raise HTTPException(status_code=400, detail=f"Invalid bucket name: {str(e)}")
+    except Exception as e:
+        logger.error(f"Unexpected error creating bucket '{request.name}': {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Create bucket failed: {str(e)}")
+
+@buckets_router.get("/{bucket_id}")
+async def get_bucket(
+    bucket_id: str,
+    storage_service: StorageService = Depends(StorageService),
+    current_user: dict = Depends(get_current_user)
+) -> BucketResponse:
+    """버킷 상세 정보 조회 (객체 수, 총 크기 포함)"""
+    try:
+        details = await storage_service.get_bucket_details(bucket_id)
+        return BucketResponse(
+            id=details["name"],
+            name=details["name"],
+            creation_date=details["creation_date"],
+            object_count=details["object_count"],
+            size=details["size"]
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.delete("/bucket/{bucket_name}")
+@buckets_router.delete("/{bucket_id}")
 async def delete_bucket(
-    bucket_name: str,
+    bucket_id: str,
     storage_service: StorageService = Depends(StorageService),
     current_user: dict = Depends(get_current_user)
 ) -> Dict[str, Any]:
-    """버킷 삭제 (버킷 내 모든 파일도 함께 삭제)"""
+    """버킷 삭제 (버킷 내 모든 객체도 함께 삭제)"""
     try:
-        await storage_service.delete_bucket(bucket_name)
+        await storage_service.delete_bucket(bucket_id)
         return {
-            "success": True,
-            "message": f"Bucket '{bucket_name}' and all its contents deleted successfully"
+            "message": f"Bucket '{bucket_id}' and all its contents deleted successfully"
         }
     except HTTPException as e:
         raise e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/{storage_name}/upload/{upload_id}/progress")
+# ==============================================
+# FOLDER MANAGEMENT APIs
+# ==============================================
+
+@buckets_router.get("/{bucket_id}/objects")
+async def list_folder_contents(
+    bucket_id: str,
+    prefix: str = Query("", description="Folder path prefix"),
+    depth: Optional[int] = Query(None, description="Depth of folder structure to return"),
+    storage_service: StorageService = Depends(StorageService),
+    current_user: dict = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """폴더 내용을 트리 구조로 조회"""
+    try:
+        return await storage_service.list_objects_as_tree(bucket_id, prefix, depth)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@buckets_router.post("/{bucket_id}/folders")
+async def create_folder(
+    bucket_id: str,
+    request: CreateFolderRequest,
+    storage_service: StorageService = Depends(StorageService),
+    current_user: dict = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """빈 폴더 생성"""
+    try:
+        await storage_service.create_folder(bucket_id, request.path)
+        return {
+            "message": f"Folder '{request.path}' created successfully in bucket '{bucket_id}'"
+        }
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@buckets_router.delete("/{bucket_id}/folders/{folder_path:path}")
+async def delete_folder(
+    bucket_id: str,
+    folder_path: str,
+    storage_service: StorageService = Depends(StorageService),
+    current_user: dict = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """폴더와 내부 모든 파일/하위폴더 삭제"""
+    try:
+        await storage_service.delete_folder(bucket_id, folder_path)
+        return {
+            "message": f"Folder '{folder_path}' and all its contents deleted successfully"
+        }
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error deleting folder '{folder_path}': {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@buckets_router.put("/{bucket_id}/folders/{folder_path:path}")
+async def rename_folder(
+    bucket_id: str,
+    folder_path: str,
+    request: RenameFolderRequest,
+    storage_service: StorageService = Depends(StorageService),
+    current_user: dict = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """폴더 이름변경/이동"""
+    try:
+        await storage_service.rename_folder(bucket_id, folder_path, request.new_path)
+        return {
+            "old_path": folder_path,
+            "new_path": request.new_path,
+            "message": "Folder renamed successfully"
+        }
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error renaming folder '{folder_path}': {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@buckets_router.post("/{bucket_id}/folders/{folder_path:path}/copy")
+async def copy_folder(
+    bucket_id: str,
+    folder_path: str,
+    request: CopyFolderRequest,
+    storage_service: StorageService = Depends(StorageService),
+    current_user: dict = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """폴더 복사"""
+    try:
+        await storage_service.copy_folder(bucket_id, folder_path, request.destination_path)
+        return {
+            "source_path": folder_path,
+            "destination_path": request.destination_path,
+            "message": "Folder copied successfully"
+        }
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error copying folder '{folder_path}': {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@buckets_router.get("/{bucket_id}/folders/{folder_path:path}/stats")
+async def get_folder_stats(
+    bucket_id: str,
+    folder_path: str,
+    storage_service: StorageService = Depends(StorageService),
+    current_user: dict = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """폴더 통계 조회"""
+    try:
+        stats = await storage_service.get_folder_stats(bucket_id, folder_path)
+        return stats
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error getting folder stats for '{folder_path}': {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ==============================================
+# OBJECT MANAGEMENT APIs
+# ==============================================
+
+@buckets_router.post("/{bucket_id}/objects")
+async def upload_object(
+    bucket_id: str,
+    file: UploadFile = File(...),
+    prefix: str = Query("", description="Object key prefix (upload path)"),
+    storage_service: StorageService = Depends(StorageService),
+    current_user: dict = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """객체 업로드 (대용량 파일 지원)"""
+    try:
+        result = await storage_service.upload_file(bucket_id, file, prefix)
+        return {
+            "object_key": f"{prefix}/{file.filename}" if prefix else file.filename,
+            "upload_id": result["upload_id"],
+            "file_size": file.size,
+            "filename": file.filename,
+            "message": "Object uploaded successfully"
+        }
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error in upload_object: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@buckets_router.get("/{bucket_id}/objects/{object_key:path}")
+async def download_object(
+    bucket_id: str,
+    object_key: str,
+    storage_service: StorageService = Depends(StorageService),
+    current_user: dict = Depends(get_current_user)
+):
+    """객체 다운로드"""
+    try:
+        content = await storage_service.download_file(bucket_id, object_key)
+
+        # 파일 확장자로부터 미디어 타입 추정
+        content_type = "application/octet-stream"
+        if object_key.lower().endswith(('.png', '.jpg', '.jpeg')):
+            content_type = "image/jpeg" if object_key.lower().endswith('.jpg') or object_key.lower().endswith(
+                '.jpeg') else "image/png"
+        elif object_key.lower().endswith('.pdf'):
+            content_type = "application/pdf"
+
+        return StreamingResponse(
+            io.BytesIO(content),
+            media_type=content_type,
+            headers={
+                "Content-Disposition": f"attachment; filename={object_key.split('/')[-1]}"
+            }
+        )
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error in download_object: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@buckets_router.put("/{bucket_id}/objects/{object_key:path}")
+async def update_object(
+    bucket_id: str,
+    object_key: str,
+    request: ObjectRenameRequest,
+    storage_service: StorageService = Depends(StorageService),
+    current_user: dict = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """객체 이름 변경/이동"""
+    try:
+        await storage_service.rename_file(
+            bucket_id,
+            object_key, # Use object_key from URL
+            request.new_key
+        )
+        return {
+            "old_key": object_key,
+            "new_key": request.new_key,
+            "message": "Object renamed successfully"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@buckets_router.post("/{bucket_id}/objects/{object_key:path}/copy")
+async def copy_object(
+    bucket_id: str,
+    object_key: str,
+    request: CopyObjectRequest,
+    storage_service: StorageService = Depends(StorageService),
+    current_user: dict = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """객체 복사"""
+    try:
+        await storage_service.copy_file(
+            bucket_id, 
+            object_key, 
+            request.destination_key,
+            request.destination_bucket
+        )
+        return {
+            "source_key": object_key,
+            "destination_key": request.destination_key,
+            "destination_bucket": request.destination_bucket or bucket_id,
+            "message": "Object copied successfully"
+        }
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error copying object '{object_key}': {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@buckets_router.delete("/{bucket_id}/objects/{object_key:path}")
+async def delete_object(
+    bucket_id: str,
+    object_key: str,
+    storage_service: StorageService = Depends(StorageService),
+    current_user: dict = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """객체 삭제"""
+    try:
+        await storage_service.delete_file(bucket_id, object_key)
+        return {
+            "object_key": object_key,
+            "message": "Object deleted successfully"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ==============================================
+# UPLOAD MANAGEMENT APIs
+# ==============================================
+
+@uploads_router.get("")
+async def list_uploads(
+    current_user: dict = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """모든 업로드 목록 조회"""
+    try:
+        uploads = await upload_tracker.get_all_uploads()
+        return {
+            "uploads": [
+                {
+                    "upload_id": upload.upload_id,
+                    "filename": upload.filename,
+                    "progress_percent": round(upload.progress_percent, 2),
+                    "status": upload.status,
+                    "elapsed_time": round(upload.elapsed_time, 2)
+                }
+                for upload in uploads.values()
+            ]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@uploads_router.get("/{upload_id}")
 async def get_upload_progress(
-    storage_name: str,
     upload_id: str,
     current_user: dict = Depends(get_current_user)
 ) -> Dict[str, Any]:
@@ -206,24 +453,31 @@ async def get_upload_progress(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/uploads")
-async def list_uploads(
+@uploads_router.delete("/{upload_id}")
+async def cancel_upload(
+    upload_id: str,
     current_user: dict = Depends(get_current_user)
 ) -> Dict[str, Any]:
-    """모든 업로드 목록 조회"""
+    """업로드 취소"""
     try:
-        uploads = await upload_tracker.get_all_uploads()
+        progress = await upload_tracker.get_progress(upload_id)
+        if not progress:
+            raise HTTPException(status_code=404, detail="Upload not found")
+        
+        if progress.status in ["completed", "failed"]:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Cannot cancel upload with status: {progress.status}"
+            )
+        
+        await upload_tracker.fail_upload(upload_id, "Upload cancelled by user")
+        
         return {
-            "uploads": [
-                {
-                    "upload_id": upload.upload_id,
-                    "filename": upload.filename,
-                    "progress_percent": round(upload.progress_percent, 2),
-                    "status": upload.status,
-                    "elapsed_time": round(upload.elapsed_time, 2)
-                }
-                for upload in uploads.values()
-            ]
+            "upload_id": upload_id,
+            "message": "Upload cancelled successfully"
         }
+    except HTTPException as e:
+        raise e
     except Exception as e:
+        logger.error(f"Error cancelling upload '{upload_id}': {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))

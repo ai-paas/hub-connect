@@ -10,7 +10,8 @@ from starlette.responses import Response
 import asyncio
 import time
 from app.core.config import settings
-from app.api import models, tags, storage, auth
+from app.api import models, tags, auth
+from app.api.storage import buckets_router, uploads_router
 from app.core.logging import logger, LoggingMiddleware
 from app.core.auth import get_current_user
 from app.middleware.rate_limit import RateLimitMiddleware
@@ -20,8 +21,10 @@ app = FastAPI(
     description="API for connecting 3rd party models to AI-PaaS",
     version="0.1.0",
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
+    redirect_slashes=False
 )
+
 
 # Request timeout middleware
 class RequestTimeoutMiddleware(BaseHTTPMiddleware):
@@ -102,7 +105,8 @@ prefix_router = APIRouter(prefix="/api/v1")
 prefix_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 prefix_router.include_router(models.router, prefix="/models", tags=["models"])
 prefix_router.include_router(tags.router, prefix="/tags", tags=["tags"])
-prefix_router.include_router(storage.router, prefix="/storage", tags=["storage"])
+prefix_router.include_router(buckets_router)  # /api/v1/buckets (enhanced with new features)
+prefix_router.include_router(uploads_router)  # /api/v1/uploads (enhanced with cancel functionality)
 
 
 # Add a new endpoint to show all routes under /api/v1
