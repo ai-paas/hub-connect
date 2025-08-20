@@ -9,12 +9,25 @@ from starlette.requests import Request
 from starlette.responses import Response
 import asyncio
 import time
+from contextlib import asynccontextmanager
 from app.core.config import settings
 from app.api import models, tags, auth
 from app.api.storage import buckets_router, uploads_router
 from app.core.logging import logger, LoggingMiddleware
 from app.core.auth import get_current_user
 from app.middleware.rate_limit import RateLimitMiddleware
+from app.services.async_service_manager import service_manager
+
+# Application lifespan management
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    logger.info("Starting async services...")
+    await service_manager.initialize()
+    yield
+    # Shutdown
+    logger.info("Shutting down async services...")
+    await service_manager.cleanup()
 
 app = FastAPI(
     title="HUB Connect API",
@@ -22,7 +35,8 @@ app = FastAPI(
     version="0.1.0",
     docs_url="/docs",
     redoc_url="/redoc",
-    redirect_slashes=False
+    redirect_slashes=False,
+    lifespan=lifespan
 )
 
 
@@ -130,7 +144,7 @@ async def get_routes(current_user: dict = Depends(get_current_user)):
 app.include_router(prefix_router)
 
 
-# Startup and shutdown events
+# Legacy startup and shutdown events (kept for compatibility)
 @app.on_event("startup")
 async def startup_event():
     logger.info(f"Application is starting up. Log level: {settings.LOG_LEVEL}")

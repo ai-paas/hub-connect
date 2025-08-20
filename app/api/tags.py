@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query, Depends
 from app.services.caching import cache_data, get_cached_data
 from app.core.config import settings
-from app.services.markets.common import get_market_service
+from app.services.markets.async_common import get_async_market_service
 from app.core.auth import get_current_user
 from app.core.logging import logger
 
@@ -15,8 +15,8 @@ async def api_tags(market: str = Query(..., description="The market to fetch tag
         cache_key = f"{market}_tag_cache"
         data, _ = await get_cached_data(cache_key)
         if not data:
-            market_service = get_market_service(market)
-            data = market_service.get_tags()
+            market_service = await get_async_market_service(market)
+            data = await market_service.get_tags()
             if not data:
                 raise HTTPException(status_code=500, detail="Failed to retrieve tags")
             await cache_data(cache_key, data)
@@ -34,8 +34,8 @@ async def api_tags_group(group: str, market: str = Query(..., description="The m
         cache_key = f"{market}_{group}_data"
         data, _ = await get_cached_data(cache_key)
         if not data:
-            market_service = get_market_service(market)
-            all_tags = market_service.get_tags()
+            market_service = await get_async_market_service(market)
+            all_tags = await market_service.get_tags()
             data = all_tags.get(group, [])
             await cache_data(cache_key, data)
 
@@ -57,8 +57,8 @@ async def api_tags_group_all(group: str, market: str = Query(..., description="T
         cache_key = f"{market}_{group}_data"
         data, _ = await get_cached_data(cache_key)
         if not data:
-            market_service = get_market_service(market)
-            all_tags = market_service.get_tags()
+            market_service = await get_async_market_service(market)
+            all_tags = await market_service.get_tags()
             data = all_tags.get(group, [])
             await cache_data(cache_key, data)
 
