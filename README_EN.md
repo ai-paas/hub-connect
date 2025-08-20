@@ -9,23 +9,56 @@
 
 HUB Connect API is a unified API service that connects various AI model marketplaces (HuggingFace, AI Hub) to AI-PaaS platforms. It provides intuitive RESTful APIs and S3-compatible storage for seamless AI model search, download, and storage operations.
 
+## Overview
+
+HUB Connect API is an enterprise-grade AI model management platform that provides unified management of AI models from multiple marketplaces and complete model lifecycle management through S3-compatible storage. Built on asynchronous architecture and microservices patterns, it ensures high performance and scalability.
+
 ## Key Features
 
-🔍 **Unified Model Search**: Integrated search across multiple marketplaces like HuggingFace with detailed model information and metadata.
+### 🔍 **Unified Model Search & Management**
+- **Multi-Marketplace Integration**: Unified search across various AI model marketplaces like HuggingFace and AI Hub
+- **Comprehensive Metadata**: Complete model metadata including information, file lists, download URLs
+- **Trending Models**: Real-time popular and trending model information
+- **Advanced Filtering**: Model filtering by tags, categories, licenses, and other criteria
 
-📈 **Trending Models**: Real-time access to popular and trending AI models across supported platforms.
+### 🏷️ **Smart Tag System**
+- **Hierarchical Tag Structure**: Multi-level tag system for efficient model classification
+- **Dynamic Tag Management**: Real-time tag updates and group-based tag management
+- **Tag-Based Search**: Precise model search and filtering using tags
 
-🏷️ **Smart Tag System**: Hierarchical tag system for efficient model classification and filtering capabilities.
+### ☁️ **Enterprise-Grade Storage Management**
+- **S3-Compatible Storage**: Support for AWS S3, Ceph, and other S3-compatible storage systems
+- **Bucket Management**: Bucket creation, deletion, detailed information retrieval (capacity, object count)
+- **Folder Management**: Complete folder management including creation, deletion, renaming, copying
+- **Large File Upload**: Multipart upload support for large files (>100MB)
+- **Upload Progress Tracking**: Real-time upload progress tracking and cancellation functionality
+- **Batch Operations**: Batch operation support for bulk object management (1000 objects per batch)
 
-☁️ **S3-Compatible Storage**: Support for AWS S3, Ceph, and other S3-compatible storage systems for file upload/download/management.
+### 🔐 **Enterprise Security**
+- **JWT-Based Authentication**: Robust JWT token-based authentication system
+- **Dual Authentication Modes**: Development/production environment-specific authentication modes
+- **Input Validation**: Complete input validation using Pydantic models
+- **Security Headers**: Compliance with web security standards including CORS and security headers
 
-🔐 **JWT Security**: Robust JWT token-based authentication system ensuring secure API access.
+### ⚡ **High-Performance Architecture**
+- **Full Asynchronous Processing**: High performance through asynchronous processing of all I/O operations
+- **Connection Pooling**: External API call optimization through HTTP connection pooling (max 50 connections)
+- **Smart Caching**: Data integrity assurance through SHA256-based cache validation
+- **Response Compression**: Network optimization through gzip compression
+- **Async Tree Structure**: Asynchronous pagination for hierarchical storage structures
 
-⚡ **High-Performance Async**: All I/O operations are asynchronous for optimal performance and scalability.
+### 🛡️ **Reliability & Monitoring**
+- **Rate Limiting**: IP-based request limiting (default 200 requests/minute)
+- **Circuit Breaker**: Automatic protection mechanism against external API failures
+- **Request Timeout**: Per-request timeout configuration (default 5 minutes)
+- **Structured Logging**: JSON-formatted structured logs and request tracking
+- **Health Check**: Service status monitoring and health check endpoints
 
-🛡️ **Reliability Features**: Rate limiting, circuit breaker, request timeout, and other stability mechanisms.
-
-🚀 **Easy Integration**: RESTful API with Docker support for seamless integration into existing systems.
+### 🚀 **Operational Efficiency**
+- **Docker Optimization**: Performance optimization through host network mode
+- **Multi-Process Support**: High-performance multi-process execution support
+- **Automatic Log Rotation**: Automatic log file rotation in 10MB units
+- **Performance Benchmarks**: Built-in performance benchmark tools
 
 ## Supported AI Model Markets
 
@@ -34,17 +67,28 @@ HUB Connect API is a unified API service that connects various AI model marketpl
 | HuggingFace | Global AI model and data marketplace | Model search, tag search, model download, trending models | ✅ Full Support |
 | AI Hub | Korean AI model and data marketplace | Model search, tag search, model download | 🚧 In Development |
 
-## Technology Stack
+## Architecture & Technology Stack
 
-| Category | Technologies |
-|----------|-------------|
-| **Backend** | FastAPI, Python 3.10+, Uvicorn |
-| **Authentication** | JWT (python-jose), bcrypt |
-| **Storage** | AWS S3, Ceph S3-compatible |
-| **Caching** | aiocache (In-memory) |
-| **Testing** | pytest, httpx |
-| **Deployment** | Docker, Docker Compose |
-| **Monitoring** | Structured logging, Health checks |
+### 🏗️ **Architecture Design**
+- **Microservices Architecture**: Clear separation of concerns and modularization
+- **Async-First Architecture**: Asynchronous processing throughout the application stack
+- **Factory Pattern**: Factory pattern for market service instantiation
+- **Repository Pattern**: Repository pattern for data access and storage operations
+- **Middleware Pipeline**: Cross-cutting concerns handling for logging, rate limiting, authentication
+
+### 💻 **Technology Stack**
+
+| Category | Technologies | Description |
+|----------|-------------|-------------|
+| **Backend** | FastAPI, Python 3.10+, Uvicorn | High-performance asynchronous web framework |
+| **Authentication** | JWT (python-jose), bcrypt | Token-based authentication and password hashing |
+| **Storage** | AWS S3, Ceph S3-compatible, aiobotocore | Asynchronous S3 client |
+| **Caching** | aiocache (In-memory) | Asynchronous in-memory caching |
+| **HTTP Client** | httpx | Asynchronous HTTP client |
+| **Data Validation** | Pydantic | Data validation and settings management |
+| **Testing** | pytest, httpx | Testing framework |
+| **Deployment** | Docker, Docker Compose | Containerization and orchestration |
+| **Monitoring** | Structured logging, Health checks | JSON logging and health checks |
 
 ## Quick Start
 
@@ -177,14 +221,36 @@ For security, use hashed passwords in production:
 - `GET /api/v1/tags/{group}` - Get tags by group
 
 ### Storage Management
-- `GET /api/v1/storage` - List storage services
-- `POST /api/v1/storage/{name}/upload` - Upload files
-- `GET /api/v1/storage/{name}/download/{key}` - Download files
-- `DELETE /api/v1/storage/{name}/{key}` - Delete files
+
+#### Bucket Management
+- `GET /api/v1/buckets` - List all buckets
+- `POST /api/v1/buckets` - Create a new bucket
+- `GET /api/v1/buckets/{bucket_id}` - Get bucket details (including object count and total size)
+- `DELETE /api/v1/buckets/{bucket_id}` - Delete a bucket and all its contents
+
+#### Folder Management
+- `GET /api/v1/buckets/{bucket_id}/objects` - List folder contents in a tree structure (use `prefix` and `depth` queries)
+- `POST /api/v1/buckets/{bucket_id}/folders` - Create an empty folder
+- `DELETE /api/v1/buckets/{bucket_id}/folders/{folder_path:path}` - Delete a folder and all its contents
+- `PUT /api/v1/buckets/{bucket_id}/folders/{folder_path:path}` - Rename/move a folder
+- `POST /api/v1/buckets/{bucket_id}/folders/{folder_path:path}/copy` - Copy a folder
+- `GET /api/v1/buckets/{bucket_id}/folders/{folder_path:path}/stats` - Get folder statistics (total size, file count, folder count)
+
+#### Object Management
+- `POST /api/v1/buckets/{bucket_id}/objects` - Upload an object (supports large files with multipart upload)
+- `GET /api/v1/buckets/{bucket_id}/objects/{object_key:path}` - Download an object
+- `PUT /api/v1/buckets/{bucket_id}/objects/{object_key:path}` - Rename/move an object
+- `POST /api/v1/buckets/{bucket_id}/objects/{object_key:path}/copy` - Copy an object
+- `DELETE /api/v1/buckets/{bucket_id}/objects/{object_key:path}` - Delete an object
+
+#### Upload Progress Tracking
+- `GET /api/v1/uploads` - List all ongoing/completed/failed uploads
+- `GET /api/v1/uploads/{upload_id}` - Get detailed progress for a specific upload
+- `DELETE /api/v1/uploads/{upload_id}` - Cancel an ongoing upload
 
 ## Environment Variables
 
-Required environment variables:
+### Required Environment Variables
 ```env
 # API Tokens
 HF_API_TOKEN=your_huggingface_token
@@ -195,12 +261,44 @@ ADMIN_USERNAME=admin
 ADMIN_PASSWORD=admin123  # Development
 ADMIN_PASSWORD_HASH=     # Production
 
-# Storage Configuration (AWS S3 example)
-STORAGE_TYPE=aws
+# Storage Configuration (Choose AWS S3 or Ceph)
+STORAGE_TYPE=aws # or ceph
+```
+
+### AWS S3 Configuration
+```env
 AWS_ACCESS_KEY_ID=your_access_key
 AWS_SECRET_ACCESS_KEY=your_secret_key
 AWS_REGION=ap-northeast-2
 AWS_S3_BUCKET=your-bucket-name
+```
+
+### Ceph S3-Compatible Configuration
+```env
+CEPH_S3_ENDPOINT=https://your-ceph-endpoint
+CEPH_ACCESS_KEY=your_access_key
+CEPH_SECRET_KEY=your_secret_key
+CEPH_BUCKET=your-bucket-name
+```
+
+### Performance & Security Settings
+```env
+# Caching Configuration
+CACHE_TIMEOUT=3600              # Cache timeout (seconds)
+GROUPS=default,premium          # User groups
+LIMITED_GROUPS=free            # Limited groups
+
+# Rate Limiting (requests per minute)
+RATE_LIMIT=200
+
+# Logging Configuration
+LOG_LEVEL=INFO                  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+
+# JWT Configuration
+ACCESS_TOKEN_EXPIRE_MINUTES=30  # JWT token expiration time (minutes)
+
+# CORS Configuration
+ALLOWED_ORIGINS=["*"]           # Allowed origins
 ```
 
 ## Project Structure
@@ -265,10 +363,62 @@ docker-compose logs --tail=100 hub-connect-api
 ```
 
 ### Performance Monitoring
-- Rate Limiting: 200 requests per minute per IP
-- Circuit Breaker: Automatic protection against external API failures
-- Request Timeout: 5-minute request timeout
-- Health Check: Service status check via `/` endpoint
+- **Rate Limiting**: 200 requests per minute per IP (configurable)
+- **Circuit Breaker**: Automatic protection and recovery against external API failures
+- **Request Timeout**: 5-minute request timeout (supports long-running operations)
+- **Connection Pooling**: Up to 50 connection pooling for external API optimization
+- **Async Tree Building**: Improved response times through asynchronous storage tree structure building
+- **Health Check**: Service status check via `/` endpoint
+
+### Performance Benchmark Execution
+```bash
+# Run performance benchmarks
+python benchmarks/performance_benchmark.py
+
+# Run performance test scripts
+python scripts/run_performance_test.py
+```
+
+## Testing
+
+### Running All Tests
+```bash
+# Run all tests
+pytest
+
+# Run tests with coverage
+pytest --cov=app tests/
+
+# Run specific test file
+pytest tests/api/test_models.py
+
+# Run async tests
+pytest tests/api/test_async_models.py
+```
+
+### Test Environment
+- Tests automatically load the `.env` file
+- External API calls are handled with mocks
+- Temporary file support for download testing
+
+## Latest Improvements (January 2025)
+
+### 🚀 **Major Feature Additions**
+- **Complete S3 Bucket Management**: Bucket creation, deletion, detailed statistics retrieval
+- **Advanced Folder Management**: Folder creation, deletion, renaming, copying functionality
+- **Upload Cancellation**: Real-time cancellation and status tracking for ongoing uploads
+- **Batch Object Management**: Optimized bulk object management for 1000 objects per batch
+
+### ⚡ **Performance Optimizations**
+- **Host Network Mode**: Significant performance improvements through Docker host networking
+- **Async Storage Tree**: Improved response times through asynchronous hierarchical storage structure building
+- **Request Timeout Middleware**: Enhanced timeout handling for long-running operations
+- **Multi-Process Support**: High-performance multi-process execution environment
+
+### 🛡️ **Security & Stability Enhancements**
+- **Safe Logging**: Logging protection mechanisms for binary file uploads
+- **Enhanced Error Handling**: Centralized error logging and handling system
+- **Dual Authentication Mode**: Optimized authentication flow for development/production environments
 
 ## Contributing
 
@@ -279,6 +429,12 @@ Contribute to the development of HUB Connect API! You can participate by followi
 3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
 4. Push to the branch (`git push origin feature/AmazingFeature`)
 5. Open a pull request
+
+### Development Guidelines
+- Write test code for all new features
+- API endpoints must comply with OpenAPI schema
+- Maintain async patterns and consider performance optimization
+- Follow security best practices
 
 ## License
 
@@ -291,3 +447,9 @@ Project link: [https://github.com/ai-paas/hub-connect](https://github.com/ai-paa
 ## Acknowledgments
 
 - To all contributors
+- HuggingFace community
+- FastAPI and Python ecosystem
+
+---
+
+⭐️ If this project helped you, please give it a star!
