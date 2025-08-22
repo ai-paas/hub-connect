@@ -3,6 +3,7 @@ from typing import Optional, Union
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from app.core.config import settings
+from app.core.logging import logger
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -35,27 +36,27 @@ def verify_token(token: str) -> Optional[dict]:
 
 def authenticate_user(username: str, password: str) -> bool:
     """
-    관리자 사용자 인증
+    Authenticate admin user
     
-    인증 우선순위:
-    1. ADMIN_PASSWORD_HASH가 설정되어 있으면 해시로 검증 (프로덕션)
-    2. ADMIN_PASSWORD_HASH가 비어있으면 평문 비밀번호로 검증 (개발용)
+    Authentication priority:
+    1. If ADMIN_PASSWORD_HASH is set, verify with hash (production)
+    2. If ADMIN_PASSWORD_HASH is empty, verify with plain text password (development)
     """
     if username == settings.ADMIN_USERNAME:
-        # 1. 해시된 비밀번호가 설정되어 있으면 해시로 검증 (프로덕션)
+        # 1. If hashed password is set, verify with hash (production)
         hash_value = getattr(settings, 'ADMIN_PASSWORD_HASH', '')
-        if hash_value and hash_value.strip():  # 빈 문자열이 아닌 경우
+        if hash_value and hash_value.strip():  # If not empty string
             try:
                 return verify_password(password, hash_value)
             except Exception as e:
-                print(f"Hash verification failed: {e}")
+                logger.warning("Hash verification failed")
                 return False
         
-        # 2. 해시가 없거나 비어있으면 평문 비밀번호로 검증 (개발용)
+        # 2. If hash is empty or missing, verify with plain text password (development)
         plain_password = getattr(settings, 'ADMIN_PASSWORD', '')
         if plain_password:
             if password == plain_password:
-                print("INFO: Using plain text password authentication (development mode)")
+                logger.info("Using development authentication mode")
                 return True
     
     return False

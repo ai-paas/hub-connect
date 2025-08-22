@@ -1,6 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
-from typing import AsyncContextManager, Optional
+from typing import AsyncContextManager, Optional, Dict, Any
 from app.core.logging import logger
 from app.services.async_storage_service import AsyncStorageService
 from app.services.markets.huggingface.async_huggingface_models import AsyncHuggingFaceService
@@ -67,6 +67,43 @@ class AsyncServiceManager:
         except Exception as e:
             logger.error(f"Error during async services cleanup: {str(e)}")
     
+    async def get_health_status(self) -> Dict[str, Any]:
+        """Get health status of all managed services."""
+        status = {
+            "initialized": self._initialized,
+            "services": {}
+        }
+        
+        if not self._initialized:
+            return status
+        
+        # Check storage service
+        if self.storage_service:
+            try:
+                # Try to list buckets as a health check
+                buckets = await self.storage_service.list_buckets()
+                status["services"]["storage"] = {
+                    "status": "healthy",
+                    "bucket_count": len(buckets)
+                }
+            except Exception as e:
+                status["services"]["storage"] = {
+                    "status": "unhealthy",
+                    "error": str(e)
+                }
+        else:
+            status["services"]["storage"] = {
+                "status": "not_initialized"
+            }
+        
+        # Check HuggingFace services
+        status["services"]["huggingface"] = {
+            "models_service": "initialized" if self.huggingface_service else "not_initialized",
+            "tags_service": "initialized" if self.huggingface_tags_service else "not_initialized"
+        }
+        
+        return status
+    
     @asynccontextmanager
     async def get_storage_service(self) -> AsyncContextManager[AsyncStorageService]:
         """Get storage service with proper context management"""
@@ -121,7 +158,22 @@ async def lifespan_context():
 
 # Dependency injection functions for FastAPI
 async def get_storage_service():
-    """FastAPI dependency for storage service"""
+    """FastAPI dependency for storage service. Validates config on-demand."""
+    from app.core.config import settings
+    from fastapi import HTTPException
+
+    if not settings.STORAGE_TYPE:
+        raise HTTPException(status_code=503, detail="Storage service is not configured. Please set STORAGE_TYPE in .env")
+
+    if settings.STORAGE_TYPE == 'aws':
+        if not settings.AWS_ACCESS_KEY_ID or not settings.AWS_SECRET_ACCESS_KEY:
+            raise HTTPException(status_code=503, detail="AWS S3 storage is not fully configured. Missing credentials.")
+    elif settings.STORAGE_TYPE == 'ceph':
+        if not settings.CEPH_ENDPOINT_URL or not settings.CEPH_ACCESS_KEY_ID or not settings.CEPH_SECRET_ACCESS_KEY:
+            raise HTTPException(status_code=503, detail="Ceph storage is not fully configured. Missing credentials or endpoint URL.")
+    else:
+        raise HTTPException(status_code=503, detail=f"Unsupported storage type: {settings.STORAGE_TYPE}")
+
     if not service_manager._initialized:
         await service_manager.initialize()
     return service_manager.storage_service

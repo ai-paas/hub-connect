@@ -7,6 +7,10 @@ from app.core.config import settings
 
 router = APIRouter()
 
+# OAuth2 Password Flow for Swagger UI
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+
+
 class Token(BaseModel):
     access_token: str
     token_type: str

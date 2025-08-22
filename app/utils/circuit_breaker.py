@@ -5,16 +5,16 @@ from enum import Enum
 from app.core.logging import logger
 
 class CircuitState(Enum):
-    CLOSED = "closed"      # 정상 동작
-    OPEN = "open"          # 차단 상태
-    HALF_OPEN = "half_open"  # 복구 시도 상태
+    CLOSED = "closed"      # Normal operation
+    OPEN = "open"          # Circuit blocked
+    HALF_OPEN = "half_open"  # Recovery attempt state
 
 class CircuitBreaker:
     def __init__(
         self,
-        failure_threshold: int = 5,     # 실패 임계값
-        recovery_timeout: int = 60,     # 복구 시도 대기 시간(초)
-        expected_exception: tuple = (Exception,)  # 감지할 예외 타입
+        failure_threshold: int = 5,     # Failure threshold
+        recovery_timeout: int = 60,     # Recovery attempt wait time (seconds)
+        expected_exception: tuple = (Exception,)  # Exception types to detect
     ):
         self.failure_threshold = failure_threshold
         self.recovery_timeout = recovery_timeout
@@ -25,7 +25,7 @@ class CircuitBreaker:
         self.state = CircuitState.CLOSED
         
     def _can_attempt_reset(self) -> bool:
-        """복구 시도가 가능한지 확인"""
+        """Check if recovery attempt is possible"""
         return (
             self.state == CircuitState.OPEN and
             self.last_failure_time is not None and
@@ -33,12 +33,12 @@ class CircuitBreaker:
         )
     
     def _record_success(self):
-        """성공 기록"""
+        """Record success"""
         self.failure_count = 0
         self.state = CircuitState.CLOSED
         
     def _record_failure(self):
-        """실패 기록"""
+        """Record failure"""
         self.failure_count += 1
         self.last_failure_time = time.time()
         
@@ -47,25 +47,25 @@ class CircuitBreaker:
             logger.warning(f"Circuit breaker opened after {self.failure_count} failures")
     
     async def call(self, func: Callable, *args, **kwargs) -> Any:
-        """Circuit breaker를 통한 함수 호출"""
+        """Function call through circuit breaker"""
         
-        # OPEN 상태에서 복구 시도 가능한지 확인
+        # Check if recovery attempt is possible in OPEN state
         if self._can_attempt_reset():
             self.state = CircuitState.HALF_OPEN
             logger.info("Circuit breaker attempting recovery")
         
-        # OPEN 상태일 때는 즉시 실패
+        # Immediate failure when in OPEN state
         if self.state == CircuitState.OPEN:
             raise Exception("Circuit breaker is OPEN - too many failures")
         
         try:
-            # 함수 실행
+            # Execute function
             if asyncio.iscoroutinefunction(func):
                 result = await func(*args, **kwargs)
             else:
                 result = func(*args, **kwargs)
             
-            # 성공 시 상태 리셋
+            # Reset state on success
             self._record_success()
             if self.state == CircuitState.HALF_OPEN:
                 logger.info("Circuit breaker recovered - state is now CLOSED")
@@ -73,16 +73,16 @@ class CircuitBreaker:
             return result
             
         except self.expected_exception as e:
-            # 예상된 예외 발생 시 실패 기록
+            # Record failure when expected exception occurs
             self._record_failure()
             logger.error(f"Circuit breaker recorded failure: {str(e)}")
             raise
         except Exception as e:
-            # 예상하지 못한 예외는 그대로 전파
+            # Propagate unexpected exceptions as-is
             logger.error(f"Unexpected error in circuit breaker: {str(e)}")
             raise
 
-# 글로벌 circuit breaker 인스턴스들
+# Global circuit breaker instances
 storage_circuit_breaker = CircuitBreaker(
     failure_threshold=3,
     recovery_timeout=30,

@@ -2,7 +2,7 @@ from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, HTTPException, Query, Depends
 from fastapi.responses import JSONResponse, FileResponse
 from starlette.responses import Response
-import gzip
+
 
 from app.core.logging import logger
 from app.services.markets.async_common import get_async_market_service
@@ -19,14 +19,7 @@ async def api_models(market: str = Query(..., description="Market name (e.g., hu
         else:
             data = await market_service.search_models(query, sort, page, limit)
 
-        json_compatible_data = JSONResponse(content=data).body
-        gzip_body = gzip.compress(json_compatible_data)
-
-        return Response(
-            content=gzip_body,
-            media_type="application/json",
-            headers={"Content-Encoding": "gzip"}
-        )
+        return data
     except Exception as e:
         logger.error(f"Error in api_models: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))

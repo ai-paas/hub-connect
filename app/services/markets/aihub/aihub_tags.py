@@ -1,13 +1,19 @@
 from app.services.markets.aihub.aihub_models import AihubService
-import logging
+from app.core.logging import logger
 
+# Global service instance
 aihub_service = AihubService()
-logger = logging.getLogger(__name__)
 
-def get_aihub_tags():
+async def get_aihub_tags():
+    """
+    Fetch AIHub tags using the service instance.
+    
+    Returns:
+        Dict containing AIHub tag categories (currently empty placeholder)
+    """
     try:
-        tags_data = "empty"
-        logger.debug(f"AIHub tags data fetched: {tags_data}")
+        tags_data = await aihub_service.get_tags()
+        logger.debug("AIHub tags data fetched successfully")
         return tags_data
     except Exception as e:
         logger.error(f"Error fetching AIHub tags: {str(e)}")

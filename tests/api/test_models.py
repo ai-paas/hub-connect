@@ -6,11 +6,10 @@ from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock
 from dotenv import load_dotenv
 
-# 테스트 시작 전에 .env 파일 로드
+# Load .env file before starting tests
 load_dotenv()
 
-# 환경 변수가 제대로 로드되었는지 확인 (디버깅 목적)
-print(f"HF_API_TOKEN: {'*' * len(os.getenv('HF_API_TOKEN', ''))}")  # 토큰 값을 직접 출력하지 않고 길이만 표시
+# HF_API_TOKEN environment variable validation is handled by Pydantic validation
 
 from app.main import app
 from app.api import models
@@ -79,7 +78,7 @@ def test_api_model_files(mock_hf_api):
 
 @patch('app.api.models.hf_hub_download')
 def test_download_model(mock_hf_hub_download):
-    # 임시 파일 생성
+    # Create temporary file
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
         temp_file.write(b"Test content")
         temp_file_path = temp_file.name
@@ -93,7 +92,7 @@ def test_download_model(mock_hf_hub_download):
         assert response.headers['content-disposition'] == 'attachment; filename="test_file.bin"'
         assert response.content == b"Test content"
     finally:
-        # 테스트 후 임시 파일 삭제
+        # Delete temporary file after test
         os.unlink(temp_file_path)
 
 @patch('app.api.models.get_model_info')
