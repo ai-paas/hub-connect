@@ -10,11 +10,11 @@ from app.core.auth import get_current_user
 from app.core.logging import logger
 from app.services.upload_tracker import upload_tracker
 
-# 통합 스토리지 라우터 (기존 URL 구조 유지)
+# Unified storage router (maintaining existing URL structure)
 buckets_router = APIRouter(prefix="/buckets", tags=["buckets"])
 uploads_router = APIRouter(prefix="/uploads", tags=["uploads"])
 
-# Request/Response 모델들
+# Request/Response models
 class CreateBucketRequest(BaseModel):
     name: str = Field(..., min_length=3, max_length=63, description="Bucket name (3-63 characters)")
     description: Optional[str] = None
@@ -56,7 +56,7 @@ class CopyFolderRequest(BaseModel):
 
 class CopyObjectRequest(BaseModel):
     destination_key: str
-    destination_bucket: Optional[str] = None  # 같은 버킷이면 None
+    destination_bucket: Optional[str] = None  # None if same bucket
 
 class BatchOperationRequest(BaseModel):
     operation: str  # "copy", "move", "delete"
@@ -79,7 +79,7 @@ async def list_buckets(
     storage_service = Depends(get_storage_service),
     current_user: dict = Depends(get_current_user)
 ) -> List[Dict[str, Any]]:
-    """버킷 목록 조회"""
+    """List all buckets"""
     try:
         buckets = await storage_service.list_buckets()
         return [
@@ -91,7 +91,8 @@ async def list_buckets(
             for bucket in buckets
         ]
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error listing buckets: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to list buckets")
 
 @buckets_router.post("")
 async def create_bucket(
@@ -99,7 +100,7 @@ async def create_bucket(
     storage_service = Depends(get_storage_service),
     current_user: dict = Depends(get_current_user)
 ) -> Dict[str, Any]:
-    """새로운 버킷 생성"""
+    """Create a new bucket"""
     try:
         await storage_service.create_bucket(request.name)
         return {
@@ -122,7 +123,7 @@ async def get_bucket(
     storage_service = Depends(get_storage_service),
     current_user: dict = Depends(get_current_user)
 ) -> BucketResponse:
-    """버킷 상세 정보 조회 (객체 수, 총 크기 포함)"""
+    """Get bucket details (includes object count and total size)"""
     try:
         details = await storage_service.get_bucket_details(bucket_id)
         return BucketResponse(
@@ -143,7 +144,7 @@ async def delete_bucket(
     storage_service = Depends(get_storage_service),
     current_user: dict = Depends(get_current_user)
 ) -> Dict[str, Any]:
-    """버킷 삭제 (버킷 내 모든 객체도 함께 삭제)"""
+    """Delete bucket (deletes all objects in bucket as well)"""
     try:
         await storage_service.delete_bucket(bucket_id)
         return {
@@ -166,7 +167,7 @@ async def list_folder_contents(
     storage_service = Depends(get_storage_service),
     current_user: dict = Depends(get_current_user)
 ) -> Dict[str, Any]:
-    """폴더 내용을 트리 구조로 조회"""
+    """List folder contents in tree structure"""
     try:
         return await storage_service.list_objects_as_tree(bucket_id, prefix, depth)
     except Exception as e:
@@ -179,7 +180,7 @@ async def create_folder(
     storage_service = Depends(get_storage_service),
     current_user: dict = Depends(get_current_user)
 ) -> Dict[str, Any]:
-    """빈 폴더 생성"""
+    """Create empty folder"""
     try:
         await storage_service.create_folder(bucket_id, request.path)
         return {
@@ -197,7 +198,7 @@ async def delete_folder(
     storage_service = Depends(get_storage_service),
     current_user: dict = Depends(get_current_user)
 ) -> Dict[str, Any]:
-    """폴더와 내부 모든 파일/하위폴더 삭제"""
+    """Delete folder and all files/subfolders inside"""
     try:
         await storage_service.delete_folder(bucket_id, folder_path)
         return {
@@ -217,7 +218,7 @@ async def rename_folder(
     storage_service = Depends(get_storage_service),
     current_user: dict = Depends(get_current_user)
 ) -> Dict[str, Any]:
-    """폴더 이름변경/이동"""
+    """Rename/move folder"""
     try:
         await storage_service.rename_folder(bucket_id, folder_path, request.new_path)
         return {
@@ -239,7 +240,7 @@ async def copy_folder(
     storage_service = Depends(get_storage_service),
     current_user: dict = Depends(get_current_user)
 ) -> Dict[str, Any]:
-    """폴더 복사"""
+    """Copy folder"""
     try:
         await storage_service.copy_folder(bucket_id, folder_path, request.destination_path)
         return {
@@ -260,7 +261,7 @@ async def get_folder_stats(
     storage_service = Depends(get_storage_service),
     current_user: dict = Depends(get_current_user)
 ) -> Dict[str, Any]:
-    """폴더 통계 조회"""
+    """Get folder statistics"""
     try:
         stats = await storage_service.get_folder_stats(bucket_id, folder_path)
         return stats
@@ -282,7 +283,7 @@ async def upload_object(
     storage_service = Depends(get_storage_service),
     current_user: dict = Depends(get_current_user)
 ) -> Dict[str, Any]:
-    """객체 업로드 (대용량 파일 지원)"""
+    """Upload object (supports large files)"""
     try:
         result = await storage_service.upload_file(bucket_id, file, prefix)
         return {
@@ -305,11 +306,11 @@ async def download_object(
     storage_service = Depends(get_storage_service),
     current_user: dict = Depends(get_current_user)
 ):
-    """객체 다운로드"""
+    """Download object"""
     try:
         content = await storage_service.download_file(bucket_id, object_key)
 
-        # 파일 확장자로부터 미디어 타입 추정
+        # Determine media type from file extension
         content_type = "application/octet-stream"
         if object_key.lower().endswith(('.png', '.jpg', '.jpeg')):
             content_type = "image/jpeg" if object_key.lower().endswith('.jpg') or object_key.lower().endswith(
@@ -338,7 +339,7 @@ async def update_object(
     storage_service = Depends(get_storage_service),
     current_user: dict = Depends(get_current_user)
 ) -> Dict[str, Any]:
-    """객체 이름 변경/이동"""
+    """Rename/move object"""
     try:
         await storage_service.rename_file(
             bucket_id,
@@ -361,7 +362,7 @@ async def copy_object(
     storage_service = Depends(get_storage_service),
     current_user: dict = Depends(get_current_user)
 ) -> Dict[str, Any]:
-    """객체 복사"""
+    """Copy object"""
     try:
         await storage_service.copy_file(
             bucket_id, 
@@ -388,7 +389,7 @@ async def delete_object(
     storage_service = Depends(get_storage_service),
     current_user: dict = Depends(get_current_user)
 ) -> Dict[str, Any]:
-    """객체 삭제"""
+    """Delete object"""
     try:
         await storage_service.delete_file(bucket_id, object_key)
         return {
@@ -406,7 +407,7 @@ async def delete_object(
 async def list_uploads(
     current_user: dict = Depends(get_current_user)
 ) -> Dict[str, Any]:
-    """모든 업로드 목록 조회"""
+    """List all uploads"""
     try:
         uploads = await upload_tracker.get_all_uploads()
         return {
@@ -429,7 +430,7 @@ async def get_upload_progress(
     upload_id: str,
     current_user: dict = Depends(get_current_user)
 ) -> Dict[str, Any]:
-    """업로드 진행 상황 조회"""
+    """Get upload progress"""
     try:
         progress = await upload_tracker.get_progress(upload_id)
         if not progress:
@@ -458,7 +459,7 @@ async def cancel_upload(
     upload_id: str,
     current_user: dict = Depends(get_current_user)
 ) -> Dict[str, Any]:
-    """업로드 취소"""
+    """Cancel upload"""
     try:
         progress = await upload_tracker.get_progress(upload_id)
         if not progress:

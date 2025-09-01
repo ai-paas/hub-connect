@@ -1,4 +1,56 @@
+version: '3.8'
+
 services:
+  # Redis service for Tus upload state management
+  redis:
+    image: redis:7-alpine
+    container_name: hub-connect-redis
+    restart: unless-stopped
+    
+    # Redis configuration
+    command: >
+      redis-server
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --timeout 300
+      --tcp-keepalive 60
+    
+    # Volumes for data persistence
+    volumes:
+      - redis_data:/data
+      - ./redis.conf:/usr/local/etc/redis/redis.conf:ro
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "2"
+    
+    # Security
+    user: "999:999"
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 600m
+          cpus: '0.5'
+        reservations:
+          memory: 256m
+          cpus: '0.1'
+
+  # Main API service
   hub-connect-api:
     build:
       context: .
@@ -6,12 +58,28 @@ services:
     container_name: hub-connect-api
     restart: unless-stopped
     
-    # Host network mode for better performance
-    network_mode: "host"
+    # Depend on Redis being healthy
+    depends_on:
+      redis:
+        condition: service_healthy
+    
+    # Use bridge network instead of host for Redis connectivity
+    networks:
+      - hub-connect-network
+    
+    # Expose port explicitly when not using host network
+    ports:
+      - "8001:8001"
     
     # Environment file
     env_file:
       - .env
+    
+    # Override Redis connection for Docker environment
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
     
     # Volume mounts
     volumes:
@@ -33,3 +101,26 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+          cpus: '2.0'
+        reservations:
+          memory: 512m
+          cpus: '0.5'
+
+# Networks
+networks:
+  hub-connect-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# Volumes
+volumes:
+  redis_data:
+    driver: local

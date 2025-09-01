@@ -28,7 +28,7 @@ class UploadProgress:
     
     @property
     def upload_speed(self) -> float:
-        """업로드 속도 (bytes/second)"""
+        """Upload speed (bytes/second)"""
         if self.elapsed_time == 0:
             return 0.0
         return self.uploaded_size / self.elapsed_time
@@ -39,7 +39,7 @@ class UploadTracker:
         self._lock = asyncio.Lock()
     
     async def start_upload(self, upload_id: str, filename: str, total_size: int, total_parts: int = 1) -> None:
-        """업로드 시작"""
+        """Start upload"""
         async with self._lock:
             self._uploads[upload_id] = UploadProgress(
                 upload_id=upload_id,
@@ -53,7 +53,7 @@ class UploadTracker:
         logger.info(f"Started tracking upload: {upload_id}")
     
     async def update_progress(self, upload_id: str, uploaded_size: int, parts_completed: int = 0) -> None:
-        """업로드 진행 상황 업데이트"""
+        """Update upload progress"""
         async with self._lock:
             if upload_id in self._uploads:
                 upload = self._uploads[upload_id]
@@ -61,7 +61,7 @@ class UploadTracker:
                 upload.parts_completed = parts_completed
     
     async def complete_upload(self, upload_id: str) -> None:
-        """업로드 완료"""
+        """Complete upload"""
         async with self._lock:
             if upload_id in self._uploads:
                 upload = self._uploads[upload_id]
@@ -70,7 +70,7 @@ class UploadTracker:
         logger.info(f"Completed upload: {upload_id}")
     
     async def fail_upload(self, upload_id: str, error_message: str) -> None:
-        """업로드 실패"""
+        """Fail upload"""
         async with self._lock:
             if upload_id in self._uploads:
                 upload = self._uploads[upload_id]
@@ -79,7 +79,7 @@ class UploadTracker:
         logger.error(f"Failed upload: {upload_id}, error: {error_message}")
     
     async def cancel_upload(self, upload_id: str) -> None:
-        """업로드 취소"""
+        """Cancel upload"""
         async with self._lock:
             if upload_id in self._uploads:
                 upload = self._uploads[upload_id]
@@ -87,17 +87,17 @@ class UploadTracker:
         logger.info(f"Cancelled upload: {upload_id}")
     
     async def get_progress(self, upload_id: str) -> Optional[UploadProgress]:
-        """업로드 진행 상황 조회"""
+        """Get upload progress"""
         async with self._lock:
             return self._uploads.get(upload_id)
     
     async def get_all_uploads(self) -> Dict[str, UploadProgress]:
-        """모든 업로드 상황 조회"""
+        """Get all upload status"""
         async with self._lock:
             return self._uploads.copy()
     
     async def cleanup_old_uploads(self, max_age_hours: int = 24) -> None:
-        """오래된 업로드 기록 정리"""
+        """Clean up old upload records"""
         cutoff_time = time.time() - (max_age_hours * 3600)
         async with self._lock:
             to_remove = [
@@ -110,5 +110,5 @@ class UploadTracker:
         if to_remove:
             logger.info(f"Cleaned up {len(to_remove)} old upload records")
 
-# 글로벌 업로드 트래커 인스턴스
+# Global upload tracker instance
 upload_tracker = UploadTracker()

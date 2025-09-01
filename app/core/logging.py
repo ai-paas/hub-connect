@@ -94,7 +94,9 @@ def setup_logging():
             raise PermissionError("Cannot write to logs directory")
         use_file_logging = True
     except (PermissionError, OSError) as e:
-        print(f"Warning: Cannot create or write to logs directory ({e}). Using console logging only.")
+        # 로그 디렉토리 생성 실패 시 경고 (fallback으로 콘솔 로깅만 사용)
+        import sys
+        sys.stderr.write(f"Warning: Cannot create or write to logs directory ({e}). Using console logging only.\n")
         use_file_logging = False
 
     # request_filter 인스턴스 생성
@@ -143,7 +145,8 @@ def setup_logging():
             file_handlers = [app_handler, api_handler, error_handler]
             
         except (PermissionError, OSError) as e:
-            print(f"Warning: Cannot create log files ({e}). Using console logging only.")
+            import sys
+            sys.stderr.write(f"Warning: Cannot create log files ({e}). Using console logging only.\n")
             file_handlers = []
     
     # 콘솔 핸들러

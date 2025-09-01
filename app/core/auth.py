@@ -1,11 +1,8 @@
 from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from app.api.auth import oauth2_scheme
 from app.services.auth_service import verify_token
 
-security = HTTPBearer()
-
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    token = credentials.credentials
+async def get_current_user(token: str = Depends(oauth2_scheme)):
     user_data = verify_token(token)
     
     if user_data is None:

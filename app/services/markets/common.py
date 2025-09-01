@@ -1,10 +1,10 @@
 from fastapi import HTTPException
 
-# 마켓별 서비스 매핑을 공통으로 관리
+# Centrally manage market-specific service mappings
 market_services = {
     "huggingface": "app.services.markets.huggingface.huggingface_models.HuggingFaceService",
     "aihub": "app.services.markets.aihub.aihub_models.AihubService",
-    # 다른 마켓이 추가되면 여기에 등록
+    # Register here when other markets are added
 }
 
 
