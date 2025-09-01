@@ -91,7 +91,8 @@ async def list_buckets(
             for bucket in buckets
         ]
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error listing buckets: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to list buckets")
 
 @buckets_router.post("")
 async def create_bucket(

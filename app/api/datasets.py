@@ -3,6 +3,7 @@ from typing import Optional, List
 from enum import Enum
 
 from app.core.auth import get_current_user
+from app.core.logging import logger
 from app.services.markets.async_common import get_async_market_service
 from app.schemas.dataset import (
     DatasetSearchResponse,
@@ -38,7 +39,8 @@ async def search_datasets(
         market_service = await get_async_market_service(market)
         return await market_service.search_datasets(sort=sort.value, page=page, page_size=limit)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error searching datasets: {str(e)}")
+        logger.error(f"Error searching datasets: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error searching datasets")
 
 
 @router.get("/{repo_id:path}/info",
@@ -54,7 +56,8 @@ async def get_dataset_info(
         market_service = await get_async_market_service(market)
         return await market_service.get_dataset_info(repo_id=repo_id)
     except Exception as e:
-        raise HTTPException(status_code=404, detail=f"Dataset not found or error occurred: {str(e)}")
+        logger.error(f"Error getting dataset info: {str(e)}")
+        raise HTTPException(status_code=404, detail="Dataset not found")
 
 
 @router.get("/{repo_id:path}/files",
@@ -70,7 +73,8 @@ async def get_dataset_files(
         market_service = await get_async_market_service(market)
         return await market_service.get_dataset_files(repo_id=repo_id)
     except Exception as e:
-        raise HTTPException(status_code=404, detail=f"Failed to fetch dataset files: {str(e)}")
+        logger.error(f"Error getting dataset files: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to fetch dataset files")
 
 
 @router.get("/{repo_id:path}/download/{filename:path}",
@@ -88,7 +92,8 @@ async def download_dataset_file(
         market_service = await get_async_market_service(market)
         return await market_service.download_file(repo_id=repo_id, filename=filename, revision=revision, download_dir=download_dir)
     except Exception as e:
-        raise HTTPException(status_code=404, detail=f"Failed to download dataset file: {str(e)}")
+        logger.error(f"Error downloading dataset file: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to download dataset file")
 
 
 @router.get("/{repo_id:path}/download",
@@ -113,4 +118,5 @@ async def download_dataset_snapshot(
             download_dir=download_dir
         )
     except Exception as e:
-        raise HTTPException(status_code=404, detail=f"Failed to download dataset snapshot: {str(e)}")
+        logger.error(f"Error downloading dataset snapshot: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to download dataset snapshot")

@@ -227,7 +227,7 @@ async def cache_refresh(market: str = None, current_user: dict = Depends(get_cur
         }
     except Exception as e:
         logger.error(f"Cache refresh failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Cache refresh failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Cache refresh failed")
 
 
 # Create a prefix router
