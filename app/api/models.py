@@ -34,10 +34,10 @@ async def api_model_files(model_id: str, market: str = Query(..., description="M
         raise HTTPException(status_code=404, detail=f"Failed to fetch model files: {str(e)}")
 
 @router.get("/{model_id:path}/download")
-async def download_model(model_id: str, filename: str, market: str = Query(..., description="Market name"), current_user: dict = Depends(get_current_user)) -> FileResponse:
+async def download_model(model_id: str, filename: str, market: str = Query(..., description="Market name"), download_dir: Optional[str] = Query(None, description="Custom download directory path"), current_user: dict = Depends(get_current_user)):
     try:
         market_service = await get_async_market_service(market)
-        return await market_service.download_model_file(model_id, filename)
+        return await market_service.download_model_file(model_id, filename, download_dir)
     except Exception as e:
         logger.error(f"Error in download_model: {str(e)}")
         raise HTTPException(status_code=404, detail=f"Failed to download model file: {str(e)}")

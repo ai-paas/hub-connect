@@ -160,6 +160,8 @@ Thumbs.db
 
 # sonarlint
 .sonarlint/
-/CLAUDE.md
+CLAUDE.md
 /.claude/settings.local.json
 /.claude/
+GEMINI.md
+AGENTS.md

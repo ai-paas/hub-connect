@@ -25,6 +25,20 @@ class RedisService:
         if self.pool and self.is_connected and self.is_available:
             return
         
+        # Check if Redis is configured
+        if not settings.REDIS_HOST or not settings.REDIS_PORT:
+            self.is_available = False
+            self.is_connected = False
+            self._initialization_failed = True
+            
+            if fail_silently:
+                logger.info("Redis not configured - Redis features disabled")
+                return
+            else:
+                error_msg = "Redis is not configured (REDIS_HOST and REDIS_PORT required)"
+                logger.error(error_msg)
+                raise ConnectionError(error_msg)
+        
         # Reset state
         self._initialization_failed = False
         

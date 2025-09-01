@@ -11,7 +11,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
-from app.api import models, tags, auth
+from app.api import models, tags, auth, datasets
 from app.api.storage import buckets_router, uploads_router
 from app.api.tus import router as tus_router
 from app.core.auth import get_current_user
@@ -20,6 +20,7 @@ from app.core.logging import logger, LoggingMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.services.async_service_manager import service_manager
 from app.services.redis_service import redis_service
+from app.services.background_cache import background_cache_service
 
 
 # Application lifespan management
@@ -41,11 +42,19 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Redis initialization failed: {e} - Tus uploads disabled")
     
+    # Start background cache service for tag preloading
+    cache_refresh_interval = getattr(settings, 'CACHE_REFRESH_INTERVAL', 3600)  # 1 hour default
+    await background_cache_service.start(refresh_interval_seconds=cache_refresh_interval)
+    
     yield
     
     # Shutdown
     logger.info("Shutting down async services...")
     await service_manager.cleanup()
+    
+    # Stop background cache service
+    await background_cache_service.stop()
+    logger.info("Background cache service stopped")
     
     # Close Redis if it was initialized
     if redis_service.is_available:
@@ -175,10 +184,18 @@ async def health_check():
         }
         health_status["status"] = "degraded"
     
+    # Check background cache service
+    cache_status = background_cache_service.get_cache_status()
+    health_status["services"]["background_cache"] = {
+        "status": "running" if cache_status["is_running"] else "stopped",
+        "details": cache_status
+    }
+    
     # Feature availability
     health_status["features"] = {
         "model_search": True,  # Always available (HuggingFace API)
         "tag_management": True,  # Always available
+        "tag_preloading": cache_status["is_running"],  # Background cache preloading
         "file_storage": health_status["services"]["storage"]["status"] == "available",
         "resumable_uploads": redis_service.is_available,
         "large_file_support": redis_service.is_available
@@ -193,6 +210,26 @@ async def health_check():
     return health_status
 
 
+# Cache management endpoints
+@app.get("/cache/status")
+async def cache_status(current_user: dict = Depends(get_current_user)):
+    """Get detailed cache service status."""
+    return background_cache_service.get_cache_status()
+
+@app.post("/cache/refresh")
+async def cache_refresh(market: str = None, current_user: dict = Depends(get_current_user)):
+    """Force cache refresh for specific market or all markets."""
+    try:
+        await background_cache_service.force_refresh(market)
+        return {
+            "message": f"Cache refresh completed for {'all markets' if not market else market}",
+            "market": market
+        }
+    except Exception as e:
+        logger.error(f"Cache refresh failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Cache refresh failed: {str(e)}")
+
+
 # Create a prefix router
 prefix_router = APIRouter(prefix="/api/v1")
 
@@ -200,6 +237,7 @@ prefix_router = APIRouter(prefix="/api/v1")
 prefix_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 prefix_router.include_router(models.router, prefix="/models", tags=["models"])
 prefix_router.include_router(tags.router, prefix="/tags", tags=["tags"])
+prefix_router.include_router(datasets.router, prefix="/datasets", tags=["datasets"])
 prefix_router.include_router(buckets_router)  # /api/v1/buckets (enhanced with new features)
 prefix_router.include_router(uploads_router)  # /api/v1/uploads (enhanced with cancel functionality)
 prefix_router.include_router(tus_router, prefix="/tus", tags=["tus"])

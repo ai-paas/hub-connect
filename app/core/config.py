@@ -6,6 +6,7 @@ class Settings(BaseSettings):
     HF_API_TOKEN: str
     ALLOWED_ORIGINS: List[str] = ["*"]
     CACHE_TIMEOUT: int = 3600
+    CACHE_REFRESH_INTERVAL: int = 3600  # Background cache refresh interval (seconds)
     GROUPS: List[str] = ["region", "other", "library", "license", "language", "dataset", "pipeline_tag"]
     LIMITED_GROUPS: List[str] = ["language", "dataset"]
     LIMIT: int = 100
@@ -36,13 +37,14 @@ class Settings(BaseSettings):
     CEPH_SECRET_ACCESS_KEY: Optional[str] = None
     CEPH_ENDPOINT_URL: Optional[str] = None
 
-    # Redis settings for Tus server state
-    REDIS_HOST: str = "localhost"
-    REDIS_PORT: int = 6379
+    # Redis settings for Tus server state (optional)
+    REDIS_HOST: Optional[str] = None
+    REDIS_PORT: Optional[int] = None
     REDIS_DB: int = 0
     
     # Tus protocol settings
     TUS_UPLOAD_BUCKET: str = "tus-uploads"
+    TUS_UPLOAD_DIR: str = "/tmp/tus_uploads"  # Local temp storage before S3
     TUS_MAX_FILE_SIZE: int = 10 * 1024**3  # 10GB
     TUS_CHUNK_SIZE: int = 10 * 1024**2     # 10MB
     TUS_BUFFER_SIZE: int = 100 * 1024**2   # 100MB
@@ -56,6 +58,9 @@ class Settings(BaseSettings):
     # Tus monitoring and logging
     TUS_ENABLE_METRICS: bool = True
     TUS_LOG_LEVEL: str = "INFO"
+    
+    # Dataset download settings
+    DATASET_DOWNLOAD_DIR: Optional[str] = None  # Custom download directory
 
     @field_validator('SECRET_KEY')
     @classmethod

@@ -1,10 +1,12 @@
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional, Union
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import httpx
 import markdown2
 from fastapi.responses import FileResponse
-from huggingface_hub import HfApi, ModelCard, hf_hub_download
+from huggingface_hub import HfApi, ModelCard, hf_hub_download, snapshot_download, HfFileSystem
+from huggingface_hub.utils import HfHubHTTPError
+import yaml
 import asyncio
 import functools
 import aiofiles
@@ -26,6 +28,8 @@ class AsyncHuggingFaceService:
     def __init__(self):
         self.hf_api = HfApi(token=settings.HF_API_TOKEN)
         self._http_client = None
+        # Dataset-specific setup
+        self.fs = HfFileSystem(token=settings.HF_API_TOKEN)
         
     @asynccontextmanager
     async def get_http_client(self):
@@ -135,18 +139,38 @@ class AsyncHuggingFaceService:
             logger.error(f"Error in get_model_files: {str(e)}")
             raise
 
-    async def download_model_file(self, model_id: str, filename: str) -> FileResponse:
-        """Download model file with async timeout"""
+    async def download_model_file(self, model_id: str, filename: str, download_dir: Optional[str] = None):
+        """Download model file with optional custom path"""
+        import shutil
+        
         try:
-            local_path = await self._async_hf_api_call(
+            # Download to cache first
+            cached_path = await self._async_hf_api_call(
                 hf_hub_download,
                 repo_id=model_id,
                 filename=filename,
                 token=settings.HF_API_TOKEN
             )
             
-            file_name = os.path.basename(local_path)
-            return FileResponse(local_path, media_type='application/octet-stream', filename=file_name)
+            # If custom download directory specified, copy file there and return path info
+            if download_dir:
+                target_dir = os.path.expanduser(download_dir)  # Support ~ expansion
+                os.makedirs(target_dir, exist_ok=True)
+                target_path = os.path.join(target_dir, filename)
+                await asyncio.to_thread(shutil.copy2, cached_path, target_path)
+                
+                # Return JSON with custom path info
+                return {
+                    "download_type": "custom_path",
+                    "file_path": target_path,
+                    "file_size": os.path.getsize(target_path),
+                    "filename": filename,
+                    "model_id": model_id
+                }
+            
+            # Default: Return FileResponse for direct download
+            file_name = os.path.basename(cached_path)
+            return FileResponse(cached_path, media_type='application/octet-stream', filename=file_name)
         except Exception as e:
             logger.error(f"Error in download_model_file: {str(e)}")
             raise
@@ -210,6 +234,200 @@ class AsyncHuggingFaceService:
         """Get HuggingFace tags using async implementation"""
         from app.services.markets.huggingface.async_huggingface_tags import get_async_huggingface_tags
         return await get_async_huggingface_tags()
+
+    # =============================================================================
+    # Dataset Methods
+    # =============================================================================
+
+    async def search_datasets(self, sort: str = "likes", page: int = 1, page_size: int = 10):
+        """Search datasets from HuggingFace"""
+        try:
+            url = f"https://huggingface.co/datasets-json?sort={sort}&withCount=true"
+            async with self.get_http_client() as http_client:
+                response = await http_client.get(url, timeout=REQUESTS_TIMEOUT)
+                response.raise_for_status()
+                data = response.json()
+                
+                datasets = data.get("datasets", [])
+                start = (page - 1) * page_size
+                end = start + page_size
+                paginated_datasets = datasets[start:end]
+                
+                return {
+                    "datasets": paginated_datasets,
+                    "total": len(datasets),
+                    "page": page,
+                    "page_size": page_size
+                }
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Error searching datasets: {e}")
+            raise Exception(f"Error searching for datasets: {e}")
+
+    async def get_dataset_info(self, repo_id: str):
+        """Get dataset info from datasets-server API"""
+        try:
+            url = f"https://datasets-server.huggingface.co/info?dataset={repo_id}"
+            async with self.get_http_client() as http_client:
+                response = await http_client.get(url, timeout=REQUESTS_TIMEOUT)
+                response.raise_for_status()
+                return response.json()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                raise Exception(f"Dataset not found: {repo_id}")
+            logger.error(f"Error getting dataset info: {e}")
+            raise Exception(f"Error getting dataset info: {e}")
+
+    async def get_dataset_files(self, repo_id: str):
+        """Get dataset file tree"""
+        try:
+            # Use HuggingFace API endpoint for file listing
+            url = f"https://huggingface.co/api/datasets/{repo_id}/revision/main?expand[]=siblings"
+            async with self.get_http_client() as http_client:
+                response = await http_client.get(url, timeout=REQUESTS_TIMEOUT)
+                response.raise_for_status()
+                data = response.json()
+                
+                # Convert to expected format
+                result = []
+                siblings = data.get("siblings", [])
+                for sibling in siblings:
+                    result.append({
+                        "path": sibling["rfilename"],
+                        "type": "file",
+                        "size": 0,  # Size not provided in this API
+                        "blob_id": None,
+                        "lfs": None
+                    })
+                
+                return result
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                raise Exception(f"Dataset not found: {repo_id}")
+            logger.error(f"Error getting dataset files: {e}")
+            raise Exception(f"Error getting dataset file tree: {e}")
+
+    async def download_file(self, repo_id: str, filename: str, revision: Optional[str] = None, download_dir: Optional[str] = None):
+        """Download dataset file with optional custom path"""
+        import shutil
+        
+        try:
+            # Try without token first (for public repos)
+            try:
+                cached_path = await self._async_hf_api_call(
+                    hf_hub_download,
+                    repo_id=repo_id,
+                    filename=filename,
+                    revision=revision,
+                    repo_type="dataset"
+                )
+            except HfHubHTTPError:
+                # If fails, try with token (for private repos)
+                cached_path = await self._async_hf_api_call(
+                    hf_hub_download,
+                    repo_id=repo_id,
+                    filename=filename,
+                    revision=revision,
+                    repo_type="dataset",
+                    token=settings.HF_API_TOKEN
+                )
+            
+            # If custom download directory specified, copy file there and return path info
+            if download_dir:
+                target_dir = os.path.expanduser(download_dir)  # Support ~ expansion
+                os.makedirs(target_dir, exist_ok=True)
+                target_path = os.path.join(target_dir, filename)
+                await asyncio.to_thread(shutil.copy2, cached_path, target_path)
+                
+                # Return JSON with custom path info
+                return {
+                    "download_type": "custom_path",
+                    "file_path": target_path,
+                    "file_size": os.path.getsize(target_path),
+                    "filename": filename,
+                    "repo_id": repo_id
+                }
+            
+            # Default: Return FileResponse for direct download
+            file_name = os.path.basename(cached_path)
+            return FileResponse(cached_path, media_type='application/octet-stream', filename=file_name)
+        except HfHubHTTPError as e:
+            if e.response.status_code == 404:
+                raise Exception(f"File not found in dataset: {filename}")
+            logger.error(f"Error downloading dataset file: {e}")
+            raise Exception(f"Error downloading file: {e}")
+
+    async def download_snapshot(self, repo_id: str, revision: Optional[str] = None, allow_patterns: Optional[List[str]] = None, ignore_patterns: Optional[List[str]] = None, download_dir: Optional[str] = None):
+        """Download dataset snapshot with optional custom path"""
+        try:
+            # If custom download directory specified, download directly there
+            if download_dir:
+                target_dir = os.path.expanduser(download_dir)
+                
+                # Try without token first (for public repos)
+                try:
+                    local_path = await self._async_hf_api_call(
+                        snapshot_download,
+                        repo_id=repo_id,
+                        revision=revision,
+                        allow_patterns=allow_patterns,
+                        ignore_patterns=ignore_patterns,
+                        repo_type="dataset",
+                        local_dir=target_dir
+                    )
+                except HfHubHTTPError:
+                    # If fails, try with token (for private repos)
+                    local_path = await self._async_hf_api_call(
+                        snapshot_download,
+                        repo_id=repo_id,
+                        revision=revision,
+                        allow_patterns=allow_patterns,
+                        ignore_patterns=ignore_patterns,
+                        repo_type="dataset",
+                        token=settings.HF_API_TOKEN,
+                        local_dir=target_dir
+                    )
+                
+                # Return JSON with download info
+                return {
+                    "download_type": "custom_snapshot",
+                    "snapshot_path": local_path,
+                    "repo_id": repo_id,
+                    "total_files": len([f for f in os.listdir(local_path) if os.path.isfile(os.path.join(local_path, f))]) if os.path.exists(local_path) else 0
+                }
+            
+            # Default: Download to cache and return cached path info
+            try:
+                cached_path = await self._async_hf_api_call(
+                    snapshot_download,
+                    repo_id=repo_id,
+                    revision=revision,
+                    allow_patterns=allow_patterns,
+                    ignore_patterns=ignore_patterns,
+                    repo_type="dataset"
+                )
+            except HfHubHTTPError:
+                cached_path = await self._async_hf_api_call(
+                    snapshot_download,
+                    repo_id=repo_id,
+                    revision=revision,
+                    allow_patterns=allow_patterns,
+                    ignore_patterns=ignore_patterns,
+                    repo_type="dataset",
+                    token=settings.HF_API_TOKEN
+                )
+            
+            # Return JSON with cache path info for default behavior
+            return {
+                "download_type": "cached_snapshot",
+                "snapshot_path": cached_path,
+                "repo_id": repo_id,
+                "message": "Files downloaded to HuggingFace cache. Access via snapshot_path."
+            }
+        except HfHubHTTPError as e:
+            if e.response.status_code == 404:
+                raise Exception(f"Dataset not found: {repo_id}")
+            logger.error(f"Error downloading dataset snapshot: {e}")
+            raise Exception(f"Error downloading snapshot: {e}")
 
 # Global async service instance
 async_huggingface_service = AsyncHuggingFaceService()
