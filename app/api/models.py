@@ -11,13 +11,35 @@ from app.core.auth import get_current_user
 router = APIRouter(tags=["models"])
 
 @router.get("/")
-async def api_models(market: str = Query(..., description="Market name (e.g., huggingface, aihub)"), query: str = "", sort: str = "downloads", page: int = Query(1, ge=1), limit: int = 30, current_user: dict = Depends(get_current_user)):
+async def api_models(
+    market: str = Query(..., description="Market name (e.g., huggingface, aihub)"), 
+    query: str = "", 
+    sort: str = "downloads", 
+    page: int = Query(1, ge=1), 
+    limit: int = 30,
+    num_parameters_min: Optional[str] = Query(None, description="Minimum parameters (e.g., '3B', '7B', '24B')"),
+    num_parameters_max: Optional[str] = Query(None, description="Maximum parameters (e.g., '128B', '256B')"),
+    include_parameters: bool = Query(True, description="Include parameter count in response"),
+    current_user: dict = Depends(get_current_user)
+):
     try:
         market_service = await get_async_market_service(market)
         if sort == "trending":
-            data = await market_service.get_trending_models(page, query)
+            data = await market_service.get_trending_models(
+                page, 
+                query, 
+                num_parameters_min, 
+                num_parameters_max
+            )
         else:
-            data = await market_service.search_models(query, sort, page, limit)
+            data = await market_service.search_models(
+                query, 
+                sort, 
+                page, 
+                limit,
+                num_parameters_min,
+                num_parameters_max
+            )
 
         return data
     except Exception as e:

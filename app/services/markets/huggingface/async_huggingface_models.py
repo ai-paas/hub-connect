@@ -15,6 +15,11 @@ from contextlib import asynccontextmanager
 from app.core.config import settings
 from app.core.logging import logger, log_external_api_call
 from app.utils.helpers import format_size
+from app.utils.parameter_utils import (
+    build_huggingface_parameter_filter,
+    format_parameter_display,
+    categorize_parameter_range
+)
 
 # Configure timeouts
 REQUESTS_TIMEOUT = 30  # 30 seconds for HTTP requests
@@ -52,14 +57,26 @@ class AsyncHuggingFaceService:
             await self._http_client.aclose()
             self._http_client = None
 
-    async def get_trending_models(self, page: int, query: str = None) -> Dict[str, Any]:
-        """Get trending models using fully async HTTP client"""
+    async def get_trending_models(
+        self, 
+        page: int, 
+        query: str = None,
+        num_parameters_min: str = None,
+        num_parameters_max: str = None
+    ) -> Dict[str, Any]:
+        """Get trending models using fully async HTTP client with parameter filtering"""
         params = {
             "sort": "trending",
             "p": page - 1 if page > 1 else None,
+            "withCount": True
         }
         if query:
             params["search"] = query
+        
+        # Add parameter filter if specified
+        param_filter = build_huggingface_parameter_filter(num_parameters_min, num_parameters_max)
+        if param_filter:
+            params["num_parameters"] = param_filter
         
         try:
             log_external_api_call(HUGGINGFACE_MODELS_JSON_URL, "GET", params=params)
@@ -70,13 +87,38 @@ class AsyncHuggingFaceService:
                 data = response.json()
                 
             models = [model for model in data['models'] if model['repoType'] == 'model']
-            return {"models": models, "total": data['numTotalItems']}
+            
+            # Enhance models with parameter display information
+            for model in models:
+                if 'numParameters' in model and model['numParameters']:
+                    model['parameterDisplay'] = format_parameter_display(model['numParameters'])
+                    model['parameterRange'] = categorize_parameter_range(model['numParameters'])
+            
+            result = {"models": models, "total": data['numTotalItems']}
+            
+            # Include applied filters in response
+            if param_filter:
+                result['applied_filters'] = {}
+                if num_parameters_min:
+                    result['applied_filters']['num_parameters_min'] = num_parameters_min
+                if num_parameters_max:
+                    result['applied_filters']['num_parameters_max'] = num_parameters_max
+            
+            return result
         except httpx.HTTPStatusError as e:
             logger.error(f"Error in get_trending_models: {str(e)}")
             raise
 
-    async def search_models(self, query: str, sort: str, page: int, limit: int) -> Dict[str, Any]:
-        """Search models using fully async HTTP client"""
+    async def search_models(
+        self, 
+        query: str, 
+        sort: str, 
+        page: int, 
+        limit: int,
+        num_parameters_min: str = None,
+        num_parameters_max: str = None
+    ) -> Dict[str, Any]:
+        """Search models using fully async HTTP client with parameter filtering"""
         params = {
             "sort": sort,
             "search": query,
@@ -85,6 +127,11 @@ class AsyncHuggingFaceService:
             "direction": -1,
             "offset": (page - 1) * limit
         }
+        
+        # Add parameter filter if specified
+        param_filter = build_huggingface_parameter_filter(num_parameters_min, num_parameters_max)
+        if param_filter:
+            params["num_parameters"] = param_filter
         
         try:
             log_external_api_call(HUGGINGFACE_API_MODELS_URL, "GET", params=params)
@@ -96,8 +143,23 @@ class AsyncHuggingFaceService:
 
             for model in data:
                 model.pop('siblings', None)
+                
+                # Enhance models with parameter display information
+                if 'numParameters' in model and model['numParameters']:
+                    model['parameterDisplay'] = format_parameter_display(model['numParameters'])
+                    model['parameterRange'] = categorize_parameter_range(model['numParameters'])
 
-            return {"models": data, "total": len(data)}
+            result = {"models": data, "total": len(data)}
+            
+            # Include applied filters in response
+            if param_filter:
+                result['applied_filters'] = {}
+                if num_parameters_min:
+                    result['applied_filters']['num_parameters_min'] = num_parameters_min
+                if num_parameters_max:
+                    result['applied_filters']['num_parameters_max'] = num_parameters_max
+            
+            return result
         except httpx.HTTPStatusError as e:
             logger.error(f"Error in search_models: {str(e)}")
             raise
