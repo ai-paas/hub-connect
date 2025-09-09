@@ -7,6 +7,9 @@ services:
     container_name: hub-connect-redis
     restart: unless-stopped
     
+    # Use host network mode for better performance (MTU optimization)
+    network_mode: host
+    
     # Redis configuration
     command: >
       redis-server
@@ -63,21 +66,16 @@ services:
       redis:
         condition: service_healthy
     
-    # Use bridge network instead of host for Redis connectivity
-    networks:
-      - hub-connect-network
-    
-    # Expose port explicitly when not using host network
-    ports:
-      - "8001:8001"
+    # Use host network mode for better performance (MTU optimization)
+    network_mode: host
     
     # Environment file
     env_file:
       - .env
     
-    # Override Redis connection for Docker environment
+    # Override Redis connection for host network environment
     environment:
-      - REDIS_HOST=redis
+      - REDIS_HOST=localhost
       - REDIS_PORT=6379
       - REDIS_DB=0
     
@@ -112,13 +110,7 @@ services:
           memory: 512m
           cpus: '0.5'
 
-# Networks
-networks:
-  hub-connect-network:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16
+# Networks section removed - using host network mode for both services
 
 # Volumes
 volumes:
