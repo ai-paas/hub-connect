@@ -27,7 +27,6 @@ HF_API_TIMEOUT = 60    # 60 seconds for HuggingFace API calls
 FILE_DOWNLOAD_TIMEOUT = 300  # 5 minutes for file downloads
 
 HUGGINGFACE_MODELS_JSON_URL = "https://huggingface.co/models-json"
-HUGGINGFACE_API_MODELS_URL = "https://huggingface.co/api/models"
 
 class AsyncHuggingFaceService:
     def __init__(self):
@@ -110,47 +109,53 @@ class AsyncHuggingFaceService:
             raise
 
     async def search_models(
-        self, 
-        query: str, 
-        sort: str, 
-        page: int, 
+        self,
+        query: str,
+        sort: str,
+        page: int,
         limit: int,
         num_parameters_min: str = None,
         num_parameters_max: str = None
     ) -> Dict[str, Any]:
-        """Search models using fully async HTTP client with parameter filtering"""
+        """Search models using models-json API with parameter filtering"""
         params = {
             "sort": sort,
-            "search": query,
-            "limit": limit,
-            "full": "true",
-            "direction": -1,
-            "offset": (page - 1) * limit
+            "withCount": True
         }
-        
+
+        # Add search query if provided
+        if query:
+            params["search"] = query
+
+        # Add pagination (models-json uses p parameter, 0-indexed)
+        # Note: models-json returns 30 items per page by default
+        if page > 1:
+            params["p"] = page - 1
+
         # Add parameter filter if specified
         param_filter = build_huggingface_parameter_filter(num_parameters_min, num_parameters_max)
         if param_filter:
             params["num_parameters"] = param_filter
-        
+
         try:
-            log_external_api_call(HUGGINGFACE_API_MODELS_URL, "GET", params=params)
-            
+            log_external_api_call(HUGGINGFACE_MODELS_JSON_URL, "GET", params=params)
+
             async with self.get_http_client() as client:
-                response = await client.get(HUGGINGFACE_API_MODELS_URL, params=params)
+                response = await client.get(HUGGINGFACE_MODELS_JSON_URL, params=params)
                 response.raise_for_status()
                 data = response.json()
 
-            for model in data:
-                model.pop('siblings', None)
-                
-                # Enhance models with parameter display information
+            # Filter only models (exclude spaces)
+            models = [model for model in data['models'] if model['repoType'] == 'model']
+
+            # Enhance models with parameter display information
+            for model in models:
                 if 'numParameters' in model and model['numParameters']:
                     model['parameterDisplay'] = format_parameter_display(model['numParameters'])
                     model['parameterRange'] = categorize_parameter_range(model['numParameters'])
 
-            result = {"models": data, "total": len(data)}
-            
+            result = {"models": models, "total": data['numTotalItems']}
+
             # Include applied filters in response
             if param_filter:
                 result['applied_filters'] = {}
@@ -158,7 +163,7 @@ class AsyncHuggingFaceService:
                     result['applied_filters']['num_parameters_min'] = num_parameters_min
                 if num_parameters_max:
                     result['applied_filters']['num_parameters_max'] = num_parameters_max
-            
+
             return result
         except httpx.HTTPStatusError as e:
             logger.error(f"Error in search_models: {str(e)}")

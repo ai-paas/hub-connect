@@ -21,7 +21,6 @@ hf_api = HfApi(token=settings.HF_API_TOKEN)
 async_client = httpx.AsyncClient(timeout=REQUESTS_TIMEOUT)
 
 HUGGINGFACE_MODELS_JSON_URL = "https://huggingface.co/models-json"
-HUGGINGFACE_API_MODELS_URL = "https://huggingface.co/api/models"
 
 class HuggingFaceService:
     async def get_trending_models(self, page: int, query: str = None) -> Dict[str, Any]:
@@ -43,24 +42,31 @@ class HuggingFaceService:
             raise
 
     async def search_models(self, query: str, sort: str, page: int, limit: int) -> Dict[str, Any]:
+        """Search models using models-json API"""
         params = {
             "sort": sort,
-            "search": query,
-            "limit": limit,
-            "full": "true",
-            "direction": -1,
-            "offset": (page - 1) * limit
+            "withCount": True
         }
+
+        # Add search query if provided
+        if query:
+            params["search"] = query
+
+        # Add pagination (models-json uses p parameter, 0-indexed)
+        # Note: models-json returns 30 items per page by default
+        if page > 1:
+            params["p"] = page - 1
+
         try:
-            log_external_api_call(HUGGINGFACE_API_MODELS_URL, "GET", params=params)
-            response = await async_client.get(HUGGINGFACE_API_MODELS_URL, params=params)
+            log_external_api_call(HUGGINGFACE_MODELS_JSON_URL, "GET", params=params)
+            response = await async_client.get(HUGGINGFACE_MODELS_JSON_URL, params=params)
             response.raise_for_status()
             data = response.json()
 
-            for model in data:
-                model.pop('siblings', None)
+            # Filter only models (exclude spaces)
+            models = [model for model in data['models'] if model['repoType'] == 'model']
 
-            return {"models": data, "total": len(data)}
+            return {"models": models, "total": data['numTotalItems']}
         except httpx.HTTPStatusError as e:
             logger.error(f"Error in search_models: {str(e)}")
             raise
