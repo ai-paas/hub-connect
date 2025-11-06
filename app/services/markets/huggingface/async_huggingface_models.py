@@ -57,11 +57,18 @@ class AsyncHuggingFaceService:
             self._http_client = None
 
     async def get_trending_models(
-        self, 
-        page: int, 
+        self,
+        page: int,
         query: str = None,
         num_parameters_min: str = None,
-        num_parameters_max: str = None
+        num_parameters_max: str = None,
+        pipeline_tag: Optional[str] = None,
+        library: Optional[List[str]] = None,
+        language: Optional[List[str]] = None,
+        license: Optional[str] = None,
+        apps: Optional[List[str]] = None,
+        inference_provider: Optional[List[str]] = None,
+        other: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """Get trending models using fully async HTTP client with parameter filtering"""
         params = {
@@ -71,38 +78,79 @@ class AsyncHuggingFaceService:
         }
         if query:
             params["search"] = query
-        
+
         # Add parameter filter if specified
         param_filter = build_huggingface_parameter_filter(num_parameters_min, num_parameters_max)
         if param_filter:
             params["num_parameters"] = param_filter
-        
+
+        # Add tag/attribute filters
+        if pipeline_tag:
+            params["pipeline_tag"] = pipeline_tag
+
+        # Multi-select filters (join with comma)
+        if library:
+            params["library"] = ",".join(library)
+
+        if language:
+            params["language"] = ",".join(language)
+
+        if license:
+            params["license"] = license
+
+        if apps:
+            params["apps"] = ",".join(apps)
+
+        if inference_provider:
+            params["inference_provider"] = ",".join(inference_provider)
+
+        if other:
+            params["other"] = ",".join(other)
+
         try:
             log_external_api_call(HUGGINGFACE_MODELS_JSON_URL, "GET", params=params)
-            
+
             async with self.get_http_client() as client:
                 response = await client.get(HUGGINGFACE_MODELS_JSON_URL, params=params)
                 response.raise_for_status()
                 data = response.json()
-                
+
             models = [model for model in data['models'] if model['repoType'] == 'model']
-            
+
             # Enhance models with parameter display information
             for model in models:
                 if 'numParameters' in model and model['numParameters']:
                     model['parameterDisplay'] = format_parameter_display(model['numParameters'])
                     model['parameterRange'] = categorize_parameter_range(model['numParameters'])
-            
+
             result = {"models": models, "total": data['numTotalItems']}
-            
+
             # Include applied filters in response
+            applied_filters = {}
             if param_filter:
-                result['applied_filters'] = {}
                 if num_parameters_min:
-                    result['applied_filters']['num_parameters_min'] = num_parameters_min
+                    applied_filters['num_parameters_min'] = num_parameters_min
                 if num_parameters_max:
-                    result['applied_filters']['num_parameters_max'] = num_parameters_max
-            
+                    applied_filters['num_parameters_max'] = num_parameters_max
+
+            if pipeline_tag:
+                applied_filters['pipeline_tag'] = pipeline_tag
+            if library:
+                applied_filters['library'] = library
+            if language:
+                applied_filters['language'] = language
+            if license:
+                applied_filters['license'] = license
+            if apps:
+                applied_filters['apps'] = apps
+            if inference_provider:
+                applied_filters['inference_provider'] = inference_provider
+            if other:
+                applied_filters['other'] = other
+
+            if applied_filters:
+                result['applied_filters'] = applied_filters
+
             return result
         except httpx.HTTPStatusError as e:
             logger.error(f"Error in get_trending_models: {str(e)}")
@@ -115,7 +163,14 @@ class AsyncHuggingFaceService:
         page: int,
         limit: int,
         num_parameters_min: str = None,
-        num_parameters_max: str = None
+        num_parameters_max: str = None,
+        pipeline_tag: Optional[str] = None,
+        library: Optional[List[str]] = None,
+        language: Optional[List[str]] = None,
+        license: Optional[str] = None,
+        apps: Optional[List[str]] = None,
+        inference_provider: Optional[List[str]] = None,
+        other: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """Search models using models-json API with parameter filtering"""
         params = {
@@ -137,6 +192,29 @@ class AsyncHuggingFaceService:
         if param_filter:
             params["num_parameters"] = param_filter
 
+        # Add tag/attribute filters
+        if pipeline_tag:
+            params["pipeline_tag"] = pipeline_tag
+
+        # Multi-select filters (join with comma)
+        if library:
+            params["library"] = ",".join(library)
+
+        if language:
+            params["language"] = ",".join(language)
+
+        if license:
+            params["license"] = license
+
+        if apps:
+            params["apps"] = ",".join(apps)
+
+        if inference_provider:
+            params["inference_provider"] = ",".join(inference_provider)
+
+        if other:
+            params["other"] = ",".join(other)
+
         try:
             log_external_api_call(HUGGINGFACE_MODELS_JSON_URL, "GET", params=params)
 
@@ -157,12 +235,30 @@ class AsyncHuggingFaceService:
             result = {"models": models, "total": data['numTotalItems']}
 
             # Include applied filters in response
+            applied_filters = {}
             if param_filter:
-                result['applied_filters'] = {}
                 if num_parameters_min:
-                    result['applied_filters']['num_parameters_min'] = num_parameters_min
+                    applied_filters['num_parameters_min'] = num_parameters_min
                 if num_parameters_max:
-                    result['applied_filters']['num_parameters_max'] = num_parameters_max
+                    applied_filters['num_parameters_max'] = num_parameters_max
+
+            if pipeline_tag:
+                applied_filters['pipeline_tag'] = pipeline_tag
+            if library:
+                applied_filters['library'] = library
+            if language:
+                applied_filters['language'] = language
+            if license:
+                applied_filters['license'] = license
+            if apps:
+                applied_filters['apps'] = apps
+            if inference_provider:
+                applied_filters['inference_provider'] = inference_provider
+            if other:
+                applied_filters['other'] = other
+
+            if applied_filters:
+                result['applied_filters'] = applied_filters
 
             return result
         except httpx.HTTPStatusError as e:
