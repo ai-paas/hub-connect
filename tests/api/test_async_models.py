@@ -88,6 +88,110 @@ async def test_async_api_models_search(async_client, mock_async_httpx_client):
     assert data['total'] == 2
 
 @pytest.mark.asyncio
+async def test_async_api_models_with_parameter_filtering(async_client, mock_async_httpx_client):
+    """Test models API with parameter filtering"""
+    mock_response = AsyncMock()
+    mock_response.json.return_value = {
+        'models': [
+            {
+                'id': 'model1', 
+                'repoType': 'model', 
+                'numParameters': 7_000_000_000,
+                'parameterDisplay': '7B',
+                'parameterRange': 'large'
+            },
+            {
+                'id': 'model2', 
+                'repoType': 'model', 
+                'numParameters': 13_000_000_000,
+                'parameterDisplay': '13B',
+                'parameterRange': 'large'
+            }
+        ],
+        'numTotalItems': 2
+    }
+    mock_response.raise_for_status.return_value = None
+    mock_async_httpx_client.get.return_value = mock_response
+
+    response = await async_client.get("/api/v1/models?sort=trending&num_parameters_min=3B&num_parameters_max=256B")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data['models']) == 2
+    assert data['total'] == 2
+    assert 'applied_filters' in data
+    assert data['applied_filters']['num_parameters_min'] == '3B'
+    assert data['applied_filters']['num_parameters_max'] == '256B'
+    
+    # Check parameter enhancement
+    for model in data['models']:
+        assert 'parameterDisplay' in model
+        assert 'parameterRange' in model
+
+@pytest.mark.asyncio
+async def test_async_api_models_parameter_filtering_min_only(async_client, mock_async_httpx_client):
+    """Test models API with minimum parameter filtering only"""
+    mock_response = AsyncMock()
+    mock_response.json.return_value = [
+        {
+            'id': 'model1', 
+            'numParameters': 24_000_000_000,
+            'parameterDisplay': '24B',
+            'parameterRange': 'extra_large'
+        }
+    ]
+    mock_response.raise_for_status.return_value = None
+    mock_async_httpx_client.get.return_value = mock_response
+
+    response = await async_client.get("/api/v1/models?query=test&num_parameters_min=24B")
+    assert response.status_code == 200
+    data = response.json()
+    assert 'applied_filters' in data
+    assert data['applied_filters']['num_parameters_min'] == '24B'
+    assert 'num_parameters_max' not in data['applied_filters']
+
+@pytest.mark.asyncio
+async def test_async_api_models_parameter_filtering_max_only(async_client, mock_async_httpx_client):
+    """Test models API with maximum parameter filtering only"""
+    mock_response = AsyncMock()
+    mock_response.json.return_value = {
+        'models': [
+            {
+                'id': 'model1', 
+                'repoType': 'model',
+                'numParameters': 3_000_000_000,
+                'parameterDisplay': '3B',
+                'parameterRange': 'large'
+            }
+        ],
+        'numTotalItems': 1
+    }
+    mock_response.raise_for_status.return_value = None
+    mock_async_httpx_client.get.return_value = mock_response
+
+    response = await async_client.get("/api/v1/models?sort=trending&num_parameters_max=128B")
+    assert response.status_code == 200
+    data = response.json()
+    assert 'applied_filters' in data
+    assert data['applied_filters']['num_parameters_max'] == '128B'
+    assert 'num_parameters_min' not in data['applied_filters']
+
+@pytest.mark.asyncio
+async def test_async_api_models_invalid_parameter_format(async_client):
+    """Test models API with invalid parameter format"""
+    response = await async_client.get("/api/v1/models?num_parameters_min=3M")
+    assert response.status_code == 400
+    data = response.json()
+    assert 'INVALID_MIN_PARAMETER_FORMAT' in str(data['detail'])
+
+@pytest.mark.asyncio
+async def test_async_api_models_invalid_parameter_range(async_client):
+    """Test models API with invalid parameter range"""
+    response = await async_client.get("/api/v1/models?num_parameters_min=256B&num_parameters_max=3B")
+    assert response.status_code == 400
+    data = response.json()
+    assert 'INVALID_PARAMETER_RANGE' in str(data['detail'])
+
+@pytest.mark.asyncio
 async def test_async_api_model_files(async_client, mock_async_hf_api):
     """Test model files API with async HuggingFace API"""
     mock_repo_info = MagicMock()

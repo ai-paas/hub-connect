@@ -175,9 +175,10 @@ class RedisService:
                     "connected_clients": info.get("connected_clients", 0)
                 }
         except Exception as e:
+            logger.warning(f"Unable to retrieve Redis connection information: {e}")
             return {
                 "connected": False,
-                "error": str(e),
+                "error": "Unable to retrieve Redis connection information",
                 "host": settings.REDIS_HOST,
                 "port": settings.REDIS_PORT,
                 "connection_retries": self._connection_retries,

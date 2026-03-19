@@ -49,7 +49,18 @@ async def tus_health(
     redis_service: RedisService = Depends(get_redis_client)
 ):
     """Check Tus service health status."""
-    redis_info = await redis_service.get_connection_info()
+    try:
+        redis_info = await redis_service.get_connection_info()
+    except Exception as e:
+        logger.error(f"Failed to build Tus health response: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error": "Service Unavailable",
+                "message": "Tus service health information is temporarily unavailable",
+                "code": "TUS_HEALTH_UNAVAILABLE"
+            }
+        )
     
     return {
         "tus_service": "available" if redis_service.is_available else "unavailable",
