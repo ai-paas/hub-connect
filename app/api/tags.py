@@ -14,7 +14,7 @@ async def api_tags(
     market: str = Query(
         ..., 
         description="AI model marketplace (huggingface, aihub)", 
-        example="huggingface"
+        examples=["huggingface"]
     ), 
     current_user: dict = Depends(get_current_user)
 ):
@@ -44,12 +44,12 @@ async def api_tags_group(
     group: str = Path(
         ..., 
         description="Tag group name (region, other, library, license, language, dataset, pipeline_tag)",
-        example="library"
+        examples=["library"]
     ), 
     market: str = Query(
         ..., 
         description="AI model marketplace (huggingface, aihub)", 
-        example="huggingface"
+        examples=["huggingface"]
     ), 
     current_user: dict = Depends(get_current_user)
 ):
@@ -79,12 +79,12 @@ async def api_tags_group_all(
     group: str = Path(
         ..., 
         description="Tag group name (region, other, library, license, language, dataset, pipeline_tag)",
-        example="language"
+        examples=["language"]
     ), 
     market: str = Query(
         ..., 
         description="AI model marketplace (huggingface, aihub)", 
-        example="huggingface"
+        examples=["huggingface"]
     ), 
     current_user: dict = Depends(get_current_user)
 ):
