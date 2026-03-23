@@ -253,12 +253,3 @@ async def get_routes(request: Request, current_user: dict = Depends(get_current_
 # Include the prefix_router in the main app
 app.include_router(prefix_router)
 
-
-# Legacy startup and shutdown events (kept for compatibility)
-@app.on_event("startup")
-async def startup_event():
-    logger.info(f"Application is starting up. Log level: {settings.LOG_LEVEL}")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    logger.info("Application is shutting down")

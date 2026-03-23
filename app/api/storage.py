@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from fastapi.responses import StreamingResponse
 import io
 import re
@@ -19,7 +19,8 @@ class CreateBucketRequest(BaseModel):
     name: str = Field(..., min_length=3, max_length=63, description="Bucket name (3-63 characters)")
     description: Optional[str] = None
     
-    @validator('name')
+    @field_validator('name')
+    @classmethod
     def validate_bucket_name(cls, v):
         if not v or not v.strip():
             raise ValueError('Bucket name cannot be empty or whitespace only')

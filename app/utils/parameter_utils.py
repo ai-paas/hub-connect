@@ -148,11 +148,14 @@ def format_parameter_display(num_parameters: int) -> str:
         str: Formatted parameter display
     """
     if num_parameters >= 1_000_000_000:
-        return f"{num_parameters / 1_000_000_000:.1f}B".rstrip('0').rstrip('.')
+        value = f"{num_parameters / 1_000_000_000:.1f}".rstrip('0').rstrip('.')
+        return f"{value}B"
     elif num_parameters >= 1_000_000:
-        return f"{num_parameters / 1_000_000:.1f}M".rstrip('0').rstrip('.')
+        value = f"{num_parameters / 1_000_000:.1f}".rstrip('0').rstrip('.')
+        return f"{value}M"
     elif num_parameters >= 1_000:
-        return f"{num_parameters / 1_000:.1f}K".rstrip('0').rstrip('.')
+        value = f"{num_parameters / 1_000:.1f}".rstrip('0').rstrip('.')
+        return f"{value}K"
     else:
         return str(num_parameters)
 

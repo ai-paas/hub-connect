@@ -162,7 +162,7 @@ class TestParameterDisplay:
     
     def test_categorize_parameter_range(self):
         """Test parameter range categorization"""
-        assert categorize_parameter_range(500_000) == "small"  # 500K
+        assert categorize_parameter_range(500_000) == "tiny"  # 500K (< 1M = tiny)
         assert categorize_parameter_range(50_000_000) == "small"  # 50M
         assert categorize_parameter_range(500_000_000) == "medium"  # 500M
         assert categorize_parameter_range(3_000_000_000) == "large"  # 3B

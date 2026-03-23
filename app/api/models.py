@@ -63,6 +63,8 @@ async def api_models(
             )
 
         return data
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error in api_models: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
