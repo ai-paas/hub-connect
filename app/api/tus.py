@@ -8,6 +8,7 @@ from app.services.redis_service import get_redis_client, RedisService
 from app.services.async_storage_service import AsyncStorageService
 from app.core.config import settings
 from app.core.logging import logger
+from app.core.auth import get_current_user
 
 
 # Create upload directory if it doesn't exist
@@ -34,17 +35,61 @@ async def tus_upload_complete_handler(file_id: str, upload_info: dict):
         raise
 
 
-def tus_auth_check():
-    """Authentication check for TUS uploads."""
-    # For now, allow all uploads - authentication is handled at FastAPI level
-    # This could be enhanced to check specific TUS permissions
-    pass
-
 # Create a wrapper router that can conditionally include TUS router
 router = APIRouter()
 
 # Add a health check endpoint for Tus service
-@router.get("/health")
+@router.get(
+    "/health",
+    summary="Tus 상태 조회",
+    description=(
+        "Tus resumable upload 기능과 Redis 연동 상태를 조회합니다.\n\n"
+        "### 응답 필드\n"
+        "| 필드 | 설명 |\n"
+        "| --- | --- |\n"
+        "| tus_service | Tus 서비스 사용 가능 상태입니다. |\n"
+        "| redis_status | Redis 연결 상태 상세 정보입니다. |\n"
+        "| features | 재개 업로드, 대용량 업로드 지원 여부입니다. |\n"
+        "| message | 현재 상태 설명 메시지입니다. |"
+    ),
+    responses={
+        200: {
+            "description": "Tus 상태를 정상 조회했습니다.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "tus_service": "unavailable",
+                        "redis_status": {
+                            "connected": False,
+                            "error": "Unable to retrieve Redis connection information",
+                            "host": None,
+                            "port": None,
+                        },
+                        "features": {
+                            "resumable_uploads": False,
+                            "large_file_support": False,
+                        },
+                        "message": "Tus service unavailable - Redis connection required",
+                    }
+                }
+            },
+        },
+        503: {
+            "description": "Tus 상태 정보를 일시적으로 조회할 수 없습니다.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": {
+                            "error": "Service Unavailable",
+                            "message": "Tus service health information is temporarily unavailable",
+                            "code": "TUS_HEALTH_UNAVAILABLE",
+                        }
+                    }
+                }
+            },
+        },
+    },
+)
 async def tus_health(
     redis_service: RedisService = Depends(get_redis_client)
 ):
@@ -80,7 +125,7 @@ if settings.REDIS_HOST and settings.REDIS_PORT:
             "prefix": "files",
             "files_dir": get_tus_upload_dir(),
             "max_size": getattr(settings, 'TUS_MAX_FILE_SIZE', 128849018880),  # ~120GB default
-            "auth": tus_auth_check,
+            "auth": get_current_user,
             "days_to_keep": getattr(settings, 'TUS_DAYS_TO_KEEP', 5),
             "on_upload_complete": tus_upload_complete_handler,
             "tags": ["tus", "uploads"]
@@ -89,8 +134,8 @@ if settings.REDIS_HOST and settings.REDIS_PORT:
         # This router will handle the TUS protocol (POST, HEAD, PATCH, etc.)
         tus_router = create_tus_router(**tus_config)
         
-        # Include the tus_router
-        router.include_router(tus_router, prefix="/files")
+        # The tuspyserver router already applies its own "files" prefix.
+        router.include_router(tus_router)
         logger.info("Tus router created at /files. Ready to accept resumable uploads.")
         
     except Exception as e:
@@ -102,7 +147,42 @@ else:
 
 # Add fallback endpoint when TUS is not configured
 if not (settings.REDIS_HOST and settings.REDIS_PORT):
-    @router.api_route("/files/{path:path}", methods=["GET", "POST", "PATCH", "HEAD", "DELETE"])
+    @router.api_route(
+        "/files/{path:path}",
+        methods=["GET", "POST", "PATCH", "HEAD", "DELETE"],
+        summary="Tus 업로드 비활성 응답",
+        description=(
+            "Redis가 설정되지 않은 환경에서 Tus 업로드 경로로 요청했을 때 반환되는 안내 응답입니다.\n\n"
+            "### 입력 필드\n"
+            "| 필드 | 위치 | 필수 | 설명 | 예시 |\n"
+            "| --- | --- | --- | --- | --- |\n"
+            "| path | path | Y | Tus 업로드 대상 경로입니다. | upload-123 |\n\n"
+            "### 응답 필드\n"
+            "| 필드 | 설명 |\n"
+            "| --- | --- |\n"
+            "| detail.error | 오류 유형입니다. |\n"
+            "| detail.message | 서비스 비활성 상태 설명입니다. |\n"
+            "| detail.code | 오류 코드입니다. |\n"
+            "| detail.suggestion | 활성화 방법 안내입니다. |"
+        ),
+        responses={
+            503: {
+                "description": "Tus 업로드 서비스가 설정되지 않았습니다.",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "detail": {
+                                "error": "Service Unavailable",
+                                "message": "Resumable upload service is not configured",
+                                "code": "TUS_SERVICE_NOT_CONFIGURED",
+                                "suggestion": "Configure REDIS_HOST and REDIS_PORT in environment variables to enable TUS uploads",
+                            }
+                        }
+                    }
+                },
+            },
+        },
+    )
     async def tus_unavailable():
         raise HTTPException(
             status_code=503,
