@@ -8,6 +8,7 @@ from app.services.redis_service import get_redis_client, RedisService
 from app.services.async_storage_service import AsyncStorageService
 from app.core.config import settings
 from app.core.logging import logger
+from app.core.auth import get_current_user
 
 
 # Create upload directory if it doesn't exist
@@ -33,12 +34,6 @@ async def tus_upload_complete_handler(file_id: str, upload_info: dict):
         logger.error(f"Error in TUS upload completion handler: {e}")
         raise
 
-
-def tus_auth_check():
-    """Authentication check for TUS uploads."""
-    # For now, allow all uploads - authentication is handled at FastAPI level
-    # This could be enhanced to check specific TUS permissions
-    pass
 
 # Create a wrapper router that can conditionally include TUS router
 router = APIRouter()
@@ -80,7 +75,7 @@ if settings.REDIS_HOST and settings.REDIS_PORT:
             "prefix": "files",
             "files_dir": get_tus_upload_dir(),
             "max_size": getattr(settings, 'TUS_MAX_FILE_SIZE', 128849018880),  # ~120GB default
-            "auth": tus_auth_check,
+            "auth": get_current_user,
             "days_to_keep": getattr(settings, 'TUS_DAYS_TO_KEEP', 5),
             "on_upload_complete": tus_upload_complete_handler,
             "tags": ["tus", "uploads"]
@@ -89,8 +84,8 @@ if settings.REDIS_HOST and settings.REDIS_PORT:
         # This router will handle the TUS protocol (POST, HEAD, PATCH, etc.)
         tus_router = create_tus_router(**tus_config)
         
-        # Include the tus_router
-        router.include_router(tus_router, prefix="/files")
+        # The tuspyserver router already applies its own "files" prefix.
+        router.include_router(tus_router)
         logger.info("Tus router created at /files. Ready to accept resumable uploads.")
         
     except Exception as e:

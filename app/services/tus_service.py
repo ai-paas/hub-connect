@@ -31,14 +31,13 @@ class TusStorageHandler:
             # Upload to S3
             filename = upload_info.get("filename", f"upload_{file_id}")
             s3_key = f"tus_uploads/{file_id}/{filename}"
-            
-            with open(local_path, "rb") as f:
-                await self.storage_service.upload_file(
-                    bucket_name=self._get_bucket_name(),
-                    key=s3_key,
-                    file_obj=f,
-                    content_type=upload_info.get("content_type", "application/octet-stream")
-                )
+
+            await self.storage_service.upload_file_from_path(
+                bucket_name=self._get_bucket_name(),
+                s3_key=s3_key,
+                local_file_path=local_path,
+                content_type=upload_info.get("content_type", "application/octet-stream")
+            )
             
             # Store upload info in Redis for tracking
             if self.redis_service.is_available:

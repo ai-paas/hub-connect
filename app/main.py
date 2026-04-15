@@ -1,6 +1,7 @@
 import asyncio
+import re
 from contextlib import asynccontextmanager
-from typing import Set
+from typing import List
 
 import time
 from fastapi import FastAPI, APIRouter, Depends
@@ -76,16 +77,19 @@ app = FastAPI(
 
 # Request timeout middleware
 class RequestTimeoutMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, timeout: int = 300, exclude_paths: Set[str] = None):
+    def __init__(self, app, timeout: int = 300, exclude_patterns: List[re.Pattern] = None):
         super().__init__(app)
         self.timeout = timeout
-        self.exclude_paths = exclude_paths or set()
+        self.exclude_patterns = exclude_patterns or []
+
+    def _is_excluded(self, path: str) -> bool:
+        return any(p.match(path) for p in self.exclude_patterns)
 
     async def dispatch(self, request: Request, call_next):
         # Check if the request path should be excluded from timeout
-        if request.url.path in self.exclude_paths:
+        if self._is_excluded(request.url.path):
             return await call_next(request)
-        
+
         try:
             # Apply timeout to request
             return await asyncio.wait_for(call_next(request), timeout=self.timeout)
@@ -105,10 +109,13 @@ class RequestTimeoutMiddleware(BaseHTTPMiddleware):
 app.add_middleware(
     RequestTimeoutMiddleware,
     timeout=300,
-    exclude_paths={
-        "/api/v1/buckets/{bucket_id}/objects", # Disable timeout for file uploads
-        "/api/v1/models/{model_id:path}/download" # Disable timeout for model downloads
-    }
+    exclude_patterns=[
+        re.compile(r"^/api/v1/buckets/[^/]+/objects$"),     # File uploads (POST)
+        re.compile(r"^/api/v1/buckets/[^/]+/objects/.+"),   # File downloads (GET with key path)
+        re.compile(r"^/api/v1/models/.+/download"),          # Model downloads
+        re.compile(r"^/api/v1/datasets/.+/download"),        # Dataset downloads
+        re.compile(r"^/api/v1/tus/"),                        # TUS resumable uploads
+    ]
 )
 app.add_middleware(RateLimitMiddleware, calls=200, period=60)  # Limit to 200 calls per minute
 app.add_middleware(LoggingMiddleware)

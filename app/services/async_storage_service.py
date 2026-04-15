@@ -6,11 +6,16 @@ from typing import List, Optional, Dict, Any, AsyncContextManager
 from fastapi import UploadFile, HTTPException
 import time
 import asyncio
+from email.utils import format_datetime
 from app.core.config import settings
 from app.core.logging import logger
-from app.utils.circuit_breaker import storage_circuit_breaker
 from app.services.upload_tracker import upload_tracker
 import uuid
+import os
+
+# Upload constants — initial operational values, adjust after Ceph network benchmarking
+MULTIPART_THRESHOLD = 5 * 1024 * 1024      # 5MB (S3 minimum part size constraint)
+MULTIPART_CHUNK_SIZE = 10 * 1024 * 1024    # 10MB per part
 
 # Configure timeouts for async storage operations
 ASYNC_STORAGE_CONFIG = AioConfig(
@@ -232,11 +237,11 @@ class AsyncStorageService:
                 upload_id=upload_id,
                 filename=file.filename,
                 total_size=file.size or 0,
-                total_parts=1 if not file.size or file.size <= 100 * 1024 * 1024 else (file.size // (50 * 1024 * 1024)) + 1
+                total_parts=1 if not file.size or file.size <= MULTIPART_THRESHOLD else (file.size // MULTIPART_CHUNK_SIZE) + 1
             )
 
             # Use multipart upload for large files
-            if file.size and file.size > 100 * 1024 * 1024:  # 100MB
+            if file.size and file.size > MULTIPART_THRESHOLD:
                 file_url = await self._async_multipart_upload(bucket_name, file, file_location, upload_id)
             else:
                 file_url = await self._async_simple_upload(bucket_name, file, file_location, upload_id)
@@ -277,69 +282,97 @@ class AsyncStorageService:
         return url
 
     async def _async_multipart_upload(self, bucket_name: str, file: UploadFile, file_location: str, upload_id: str) -> str:
-        """Async multipart upload for large files"""
-        CHUNK_SIZE = 50 * 1024 * 1024  # 50MB chunks
+        """Async multipart upload with bounded concurrency for large files.
+
+        Reads chunks sequentially from UploadFile (stream-based) and uploads
+        parts concurrently using a semaphore to limit in-flight parts.
+        """
+        MAX_CONCURRENT_PARTS = 4
         s3_upload_id = None
-        
+
         try:
-            # Start multipart upload
             response = await self.s3_client.create_multipart_upload(
                 Bucket=bucket_name,
                 Key=file_location
             )
             s3_upload_id = response['UploadId']
-            
             logger.info(f"Started multipart upload for {file_location}, upload_id: {s3_upload_id}")
-            
-            parts = []
-            part_number = 1
+
+            parts_results = {}  # {part_number: ETag}
             uploaded_size = 0
-            
-            # Stream upload in chunks
-            while True:
-                chunk = await file.read(CHUNK_SIZE)
-                
-                if not chunk:
-                    break
-                
-                logger.debug(f"Uploading part {part_number}, size: {len(chunk)}")
-                
-                part_response = await self.s3_client.upload_part(
+
+            async def _upload_part(pn: int, chunk: bytes):
+                logger.debug(f"Uploading part {pn}, size: {len(chunk)}")
+                part_resp = await self.s3_client.upload_part(
                     Bucket=bucket_name,
                     Key=file_location,
-                    PartNumber=part_number,
+                    PartNumber=pn,
                     UploadId=s3_upload_id,
                     Body=chunk
                 )
-                
-                parts.append({
-                    'ETag': part_response['ETag'],
-                    'PartNumber': part_number
-                })
-                
-                uploaded_size += len(chunk)
-                await upload_tracker.update_progress(upload_id, uploaded_size, part_number)
-                
+                return pn, len(chunk), part_resp['ETag']
+
+            pending_tasks = set()
+            part_number = 1
+
+            while True:
+                chunk = await file.read(MULTIPART_CHUNK_SIZE)
+                if not chunk:
+                    break
+
+                pending_tasks.add(asyncio.create_task(_upload_part(part_number, chunk)))
+
+                if len(pending_tasks) >= MAX_CONCURRENT_PARTS:
+                    done, pending_tasks = await asyncio.wait(
+                        pending_tasks,
+                        return_when=asyncio.FIRST_COMPLETED
+                    )
+                    for task in done:
+                        pn, chunk_size, etag = await task
+                        parts_results[pn] = etag
+                        uploaded_size += chunk_size
+                        await upload_tracker.update_progress(upload_id, uploaded_size, pn)
+
                 part_number += 1
-            
-            # Complete multipart upload
+
+            while pending_tasks:
+                done, pending_tasks = await asyncio.wait(
+                    pending_tasks,
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+                for task in done:
+                    pn, chunk_size, etag = await task
+                    parts_results[pn] = etag
+                    uploaded_size += chunk_size
+                    await upload_tracker.update_progress(upload_id, uploaded_size, pn)
+
+            # Build parts list sorted by part number
+            parts = [
+                {'ETag': parts_results[pn], 'PartNumber': pn}
+                for pn in sorted(parts_results.keys())
+            ]
+
             await self.s3_client.complete_multipart_upload(
                 Bucket=bucket_name,
                 Key=file_location,
                 UploadId=s3_upload_id,
                 MultipartUpload={'Parts': parts}
             )
-            
+
             url = await self.s3_client.generate_presigned_url(
                 'get_object',
                 Params={'Bucket': bucket_name, 'Key': file_location},
                 ExpiresIn=3600
             )
-            
+
             logger.info(f"Multipart upload completed: {file_location}, parts: {len(parts)}")
             return url
-            
+
         except Exception as e:
+            for task in pending_tasks:
+                task.cancel()
+            if pending_tasks:
+                await asyncio.gather(*pending_tasks, return_exceptions=True)
             if s3_upload_id:
                 try:
                     await self.s3_client.abort_multipart_upload(
@@ -352,8 +385,129 @@ class AsyncStorageService:
                     logger.error(f"Failed to abort multipart upload {s3_upload_id}: {abort_e}")
             raise
 
+    async def upload_file_from_path(
+        self,
+        bucket_name: str,
+        s3_key: str,
+        local_file_path: str,
+        content_type: str = "application/octet-stream"
+    ) -> str:
+        """Upload a local file to S3 using chunk-based approach.
+
+        Designed for TUS completion handler and other cases where the file
+        is already on disk. Avoids full memory load by using chunk-based
+        multipart upload for files >= 5MB.
+        """
+        s3_upload_id = None
+        pending_tasks = set()
+
+        try:
+            file_size = os.path.getsize(local_file_path)
+            logger.info(f"Uploading local file to {bucket_name}/{s3_key}, size: {file_size}")
+
+            if file_size < MULTIPART_THRESHOLD:
+                # Small file: put_object (< 5MB, memory impact negligible)
+                async with aiofiles.open(local_file_path, "rb") as f:
+                    file_content = await f.read()
+
+                await self.s3_client.put_object(
+                    Bucket=bucket_name,
+                    Key=s3_key,
+                    Body=file_content,
+                    ContentType=content_type
+                )
+            else:
+                # Large file: multipart upload with bounded concurrency
+                MAX_CONCURRENT_PARTS = 4
+                response = await self.s3_client.create_multipart_upload(
+                    Bucket=bucket_name,
+                    Key=s3_key,
+                    ContentType=content_type
+                )
+                s3_upload_id = response['UploadId']
+
+                logger.info(f"Started multipart upload for {s3_key}, upload_id: {s3_upload_id}")
+
+                parts_results = {}
+
+                async def _upload_part(pn: int, chunk: bytes):
+                    logger.debug(f"Uploading part {pn}, size: {len(chunk)}")
+                    part_resp = await self.s3_client.upload_part(
+                        Bucket=bucket_name,
+                        Key=s3_key,
+                        PartNumber=pn,
+                        UploadId=s3_upload_id,
+                        Body=chunk
+                    )
+                    return pn, part_resp['ETag']
+
+                pending_tasks = set()
+                part_number = 1
+
+                async with aiofiles.open(local_file_path, "rb") as f:
+                    while True:
+                        chunk = await f.read(MULTIPART_CHUNK_SIZE)
+                        if not chunk:
+                            break
+                        pending_tasks.add(asyncio.create_task(_upload_part(part_number, chunk)))
+
+                        if len(pending_tasks) >= MAX_CONCURRENT_PARTS:
+                            done, pending_tasks = await asyncio.wait(
+                                pending_tasks,
+                                return_when=asyncio.FIRST_COMPLETED
+                            )
+                            for task in done:
+                                pn, etag = await task
+                                parts_results[pn] = etag
+
+                        part_number += 1
+
+                while pending_tasks:
+                    done, pending_tasks = await asyncio.wait(
+                        pending_tasks,
+                        return_when=asyncio.FIRST_COMPLETED
+                    )
+                    for task in done:
+                        pn, etag = await task
+                        parts_results[pn] = etag
+
+                parts = [
+                    {'ETag': parts_results[pn], 'PartNumber': pn}
+                    for pn in sorted(parts_results.keys())
+                ]
+
+                await self.s3_client.complete_multipart_upload(
+                    Bucket=bucket_name,
+                    Key=s3_key,
+                    UploadId=s3_upload_id,
+                    MultipartUpload={'Parts': parts}
+                )
+
+                logger.info(f"Multipart upload completed: {s3_key}, parts: {len(parts)}")
+
+            logger.info(f"Local file uploaded successfully: {s3_key}")
+            return s3_key
+
+        except Exception as e:
+            for task in pending_tasks:
+                task.cancel()
+            if pending_tasks:
+                await asyncio.gather(*pending_tasks, return_exceptions=True)
+            if s3_upload_id:
+                try:
+                    await self.s3_client.abort_multipart_upload(
+                        Bucket=bucket_name,
+                        Key=s3_key,
+                        UploadId=s3_upload_id
+                    )
+                    logger.info(f"Aborted multipart upload: {s3_upload_id}")
+                except Exception as abort_e:
+                    logger.error(f"Failed to abort multipart upload {s3_upload_id}: {abort_e}")
+            logger.error(f"Error uploading local file {local_file_path}: {str(e)}")
+            raise
+
     async def download_file(self, bucket_name: str, file_key: str) -> bytes:
-        """Download file asynchronously"""
+        """Download file asynchronously (deprecated: use stream_file for large files)"""
         try:
             logger.info(f"Downloading file: {bucket_name}/{file_key}")
 
@@ -383,6 +537,58 @@ class AsyncStorageService:
             raise HTTPException(status_code=500, detail=str(e))
         except Exception as e:
             logger.error(f"Unexpected error downloading file: {str(e)}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    async def stream_file(self, bucket_name: str, file_key: str, chunk_size: int = 1024 * 1024):
+        """Stream file from S3 without loading entire file into memory.
+
+        Returns (async_generator, metadata_dict). The async generator yields
+        chunks from the S3 Body stream. The Body lifecycle is maintained inside
+        the generator via `async with response['Body']` so the stream stays
+        open until all chunks are consumed.
+
+        Uses a single get_object call for both metadata extraction and streaming
+        (no separate head_object call).
+        """
+        try:
+            logger.info(f"Streaming file: {bucket_name}/{file_key}")
+
+            response = await self.s3_client.get_object(Bucket=bucket_name, Key=file_key)
+
+            last_modified = response.get("LastModified", "")
+            if hasattr(last_modified, "tzinfo"):
+                last_modified = format_datetime(last_modified, usegmt=True)
+
+            metadata = {
+                "content_length": response["ContentLength"],
+                "content_type": response.get("ContentType", "application/octet-stream"),
+                "etag": response.get("ETag", ""),
+                "last_modified": last_modified,
+            }
+
+            async def _generate():
+                async with response["Body"] as stream:
+                    while True:
+                        chunk = await stream.read(chunk_size)
+                        if not chunk:
+                            break
+                        yield chunk
+
+            return _generate(), metadata
+
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+            if error_code in ('404', 'NoSuchKey'):
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"File '{file_key}' not found in bucket '{bucket_name}'"
+                )
+            logger.error(f"Error streaming file: {str(e)}")
+            raise HTTPException(status_code=500, detail=str(e))
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error streaming file: {str(e)}")
             raise HTTPException(status_code=500, detail=str(e))
 
     async def delete_file(self, bucket_name: str, file_key: str) -> None:
@@ -468,14 +674,21 @@ class AsyncStorageService:
                         new_key = new_path + old_key[len(old_path):]
                         objects_to_copy.append((old_key, new_key))
             
-            # Copy objects to new location
-            for old_key, new_key in objects_to_copy:
-                await self.s3_client.copy_object(
-                    Bucket=bucket_name,
-                    CopySource={'Bucket': bucket_name, 'Key': old_key},
-                    Key=new_key
-                )
-            
+            # Copy objects to new location with bounded concurrency
+            sem = asyncio.Semaphore(10)
+
+            async def _copy_one(src, dst):
+                async with sem:
+                    await self.s3_client.copy_object(
+                        Bucket=bucket_name,
+                        CopySource={'Bucket': bucket_name, 'Key': src},
+                        Key=dst
+                    )
+
+            await asyncio.gather(*[
+                _copy_one(old_key, new_key) for old_key, new_key in objects_to_copy
+            ])
+
             # Delete old objects
             objects_to_delete = [{'Key': old_key} for old_key, _ in objects_to_copy]
             if objects_to_delete:
@@ -486,9 +699,9 @@ class AsyncStorageService:
                         Bucket=bucket_name,
                         Delete={'Objects': batch}
                     )
-            
+
             logger.info(f"Renamed folder {old_path} to {new_path} ({len(objects_to_copy)} objects)")
-            
+
         except ClientError as e:
             logger.error(f"Error renaming folder '{old_path}' to '{new_path}': {str(e)}")
             raise HTTPException(status_code=500, detail=f"Could not rename folder: {str(e)}")
@@ -515,16 +728,23 @@ class AsyncStorageService:
                         dest_key = dest_path + source_key[len(source_path):]
                         objects_to_copy.append((source_key, dest_key))
             
-            # Copy objects to destination
-            for source_key, dest_key in objects_to_copy:
-                await self.s3_client.copy_object(
-                    Bucket=bucket_name,
-                    CopySource={'Bucket': bucket_name, 'Key': source_key},
-                    Key=dest_key
-                )
-            
+            # Copy objects to destination with bounded concurrency
+            sem = asyncio.Semaphore(10)
+
+            async def _copy_one(src, dst):
+                async with sem:
+                    await self.s3_client.copy_object(
+                        Bucket=bucket_name,
+                        CopySource={'Bucket': bucket_name, 'Key': src},
+                        Key=dst
+                    )
+
+            await asyncio.gather(*[
+                _copy_one(source_key, dest_key) for source_key, dest_key in objects_to_copy
+            ])
+
             logger.info(f"Copied folder {source_path} to {dest_path} ({len(objects_to_copy)} objects)")
-            
+
         except ClientError as e:
             logger.error(f"Error copying folder '{source_path}' to '{dest_path}': {str(e)}")
             raise HTTPException(status_code=500, detail=f"Could not copy folder: {str(e)}")

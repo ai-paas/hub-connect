@@ -2,7 +2,6 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field, field_validator
 from fastapi.responses import StreamingResponse
-import io
 import re
 
 from app.services.async_service_manager import get_storage_service
@@ -307,24 +306,26 @@ async def download_object(
     storage_service = Depends(get_storage_service),
     current_user: dict = Depends(get_current_user)
 ):
-    """Download object"""
+    """Download object with true streaming (no full memory buffering)"""
     try:
-        content = await storage_service.download_file(bucket_id, object_key)
+        stream_gen, metadata = await storage_service.stream_file(bucket_id, object_key)
 
-        # Determine media type from file extension
-        content_type = "application/octet-stream"
-        if object_key.lower().endswith(('.png', '.jpg', '.jpeg')):
-            content_type = "image/jpeg" if object_key.lower().endswith('.jpg') or object_key.lower().endswith(
-                '.jpeg') else "image/png"
-        elif object_key.lower().endswith('.pdf'):
-            content_type = "application/pdf"
+        filename = object_key.split('/')[-1]
+
+        headers = {
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Length": str(metadata["content_length"]),
+            "Accept-Ranges": "bytes",
+        }
+        if metadata.get("etag"):
+            headers["ETag"] = metadata["etag"]
+        if metadata.get("last_modified"):
+            headers["Last-Modified"] = str(metadata["last_modified"])
 
         return StreamingResponse(
-            io.BytesIO(content),
-            media_type=content_type,
-            headers={
-                "Content-Disposition": f"attachment; filename={object_key.split('/')[-1]}"
-            }
+            stream_gen,
+            media_type=metadata["content_type"],
+            headers=headers,
         )
     except HTTPException as e:
         raise e
