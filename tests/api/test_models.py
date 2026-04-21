@@ -1,10 +1,10 @@
 import os
 import tempfile
+from unittest.mock import patch, AsyncMock
 
 import pytest
-from fastapi.testclient import TestClient
-from unittest.mock import patch, MagicMock, AsyncMock
 from dotenv import load_dotenv
+from fastapi.testclient import TestClient
 
 # Load .env file before starting tests
 load_dotenv()

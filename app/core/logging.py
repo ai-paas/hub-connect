@@ -1,11 +1,13 @@
-import logging
-from logging import LogRecord
+import os
 from logging.handlers import RotatingFileHandler
+
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response
+
+import logging
 from app.core.config import settings
-import os
+from logging import LogRecord
 
 
 class RequestInfoFilter(logging.Filter):

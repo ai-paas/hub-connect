@@ -1,9 +1,11 @@
 from datetime import timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field
-from app.services.auth_service import authenticate_user, create_access_token
+
 from app.core.config import settings
+from app.services.auth_service import authenticate_user, create_access_token
 
 router = APIRouter()
 

@@ -1,6 +1,8 @@
-from pydantic_settings import BaseSettings
-from pydantic import field_validator, ConfigDict
 from typing import Optional, List
+
+from pydantic import field_validator, ConfigDict
+from pydantic_settings import BaseSettings
+
 
 class Settings(BaseSettings):
     HF_API_TOKEN: str

@@ -1,6 +1,8 @@
 from functools import wraps
 from typing import Callable, Any
+
 from fastapi import HTTPException
+
 from app.core.logging import logger
 
 

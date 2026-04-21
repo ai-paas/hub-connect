@@ -1,17 +1,19 @@
-import aiofiles
-from aiobotocore.session import get_session
-from aiobotocore.config import AioConfig
-from botocore.exceptions import ClientError
-from typing import List, Optional, Dict, Any, AsyncContextManager
-from fastapi import UploadFile, HTTPException
-import time
 import asyncio
+import os
+import time
+import uuid
 from email.utils import format_datetime
+from typing import List, Dict, Any
+
+import aiofiles
+from aiobotocore.config import AioConfig
+from aiobotocore.session import get_session
+from botocore.exceptions import ClientError
+from fastapi import UploadFile, HTTPException
+
 from app.core.config import settings
 from app.core.logging import logger
 from app.services.upload_tracker import upload_tracker
-import uuid
-import os
 
 # Upload constants — initial operational values, adjust after Ceph network benchmarking
 MULTIPART_THRESHOLD = 5 * 1024 * 1024      # 5MB (S3 minimum part size constraint)

@@ -1,6 +1,7 @@
-from pydantic import BaseModel, RootModel
 from typing import List, Optional, Dict, Any, Union
-from enum import Enum
+
+from pydantic import BaseModel, RootModel
+
 
 class Dataset(BaseModel):
     id: str

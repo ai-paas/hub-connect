@@ -1,12 +1,10 @@
 from typing import Optional, Dict, Any, List
+
 from fastapi import APIRouter, HTTPException, Query, Depends
-from fastapi.responses import JSONResponse, FileResponse
-from starlette.responses import Response
 
-
+from app.core.auth import get_current_user
 from app.core.logging import logger
 from app.services.markets.async_common import get_async_market_service
-from app.core.auth import get_current_user
 
 router = APIRouter(tags=["models"])
 

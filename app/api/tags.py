@@ -1,9 +1,10 @@
 from fastapi import APIRouter, HTTPException, Query, Path, Depends
-from app.services.caching import cache_data, get_cached_data
-from app.core.config import settings
-from app.services.markets.async_common import get_async_market_service
+
 from app.core.auth import get_current_user
+from app.core.config import settings
 from app.core.logging import logger
+from app.services.caching import cache_data, get_cached_data
+from app.services.markets.async_common import get_async_market_service
 
 router = APIRouter(tags=["tags"])
 

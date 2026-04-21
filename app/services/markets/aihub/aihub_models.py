@@ -1,5 +1,7 @@
 from typing import Dict, Any
+
 from app.core.logging import logger
+
 
 class AihubService:
     """

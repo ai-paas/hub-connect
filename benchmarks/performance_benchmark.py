@@ -1,12 +1,12 @@
 import asyncio
-import time
+import logging
 import statistics
+import time
+from typing import List, Dict, Any
+
 import httpx
 import matplotlib.pyplot as plt
 import pandas as pd
-from typing import List, Dict, Any
-from contextlib import asynccontextmanager
-import logging
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

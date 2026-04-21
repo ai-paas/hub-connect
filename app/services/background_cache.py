@@ -1,10 +1,11 @@
 import asyncio
-from typing import Optional, Dict, List
 from datetime import datetime, timedelta
-from app.services.caching import cache_data, get_cached_data
-from app.services.markets.async_common import get_async_market_service
+from typing import Optional, Dict
+
 from app.core.config import settings
 from app.core.logging import logger
+from app.services.caching import cache_data, get_cached_data
+from app.services.markets.async_common import get_async_market_service
 
 
 class BackgroundCacheService:

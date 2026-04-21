@@ -1,5 +1,5 @@
-from app.services.markets.aihub.aihub_models import AihubService
 from app.core.logging import logger
+from app.services.markets.aihub.aihub_models import AihubService
 
 # Global service instance
 aihub_service = AihubService()

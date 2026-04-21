@@ -1,5 +1,3 @@
-from typing import Union
-
 # Async market service registry - import dynamically to avoid dependency issues
 ASYNC_MARKET_SERVICES = {
     "huggingface": "app.services.markets.huggingface.async_huggingface_models.AsyncHuggingFaceService",

@@ -5,11 +5,10 @@ Compares sync vs async implementation performance
 """
 
 import asyncio
-import subprocess
-import time
-import sys
-import os
 import logging
+import subprocess
+import sys
+import time
 from pathlib import Path
 
 # Add project root to Python path
