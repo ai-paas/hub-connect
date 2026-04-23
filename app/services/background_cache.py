@@ -14,7 +14,7 @@ class BackgroundCacheService:
     def __init__(self):
         self.is_running = False
         self.refresh_interval = 3600  # 1 hour default
-        self.cache_warmup_markets = ["huggingface", "aihub"]  # Markets to preload
+        self.cache_warmup_markets = ["huggingface", "kaggle"]  # Markets to preload
         self.background_task: Optional[asyncio.Task] = None
         self.last_refresh: Dict[str, datetime] = {}
         

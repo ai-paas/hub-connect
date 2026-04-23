@@ -15,6 +15,8 @@ INTERNAL_SERVER_ERROR_MESSAGE = "Internal Server Error"
     summary="전체 태그 그룹 조회",
     description=(
         "선택한 마켓의 전체 태그 그룹 데이터를 조회합니다.\n\n"
+        "Kaggle은 HF 같은 통합 태그 체계가 없어 **부분 응답**을 반환합니다:\n"
+        "`library`(framework 상수)와 `dataset`(`datasets_list_tags`)만 채워지고 나머지 그룹은 빈 배열입니다.\n\n"
         "### 입력 필드\n"
         "| 필드 | 위치 | 필수 | 설명 | 예시 |\n"
         "| --- | --- | --- | --- | --- |\n"
@@ -22,13 +24,13 @@ INTERNAL_SERVER_ERROR_MESSAGE = "Internal Server Error"
         "### 응답 필드\n"
         "| 필드 | 설명 |\n"
         "| --- | --- |\n"
-        "| region | 지역 태그 목록입니다. |\n"
-        "| other | 기타 태그 목록입니다. |\n"
-        "| library | 라이브러리 태그 목록입니다. |\n"
-        "| license | 라이선스 태그 목록입니다. |\n"
-        "| language | 언어 태그 목록입니다. |\n"
+        "| region | 지역 태그 목록입니다. Kaggle은 `[]`. |\n"
+        "| other | 기타 태그 목록입니다. Kaggle은 `[]`. |\n"
+        "| library | 라이브러리 태그 목록입니다. Kaggle은 framework 상수로 채워집니다. |\n"
+        "| license | 라이선스 태그 목록입니다. Kaggle은 `[]`. |\n"
+        "| language | 언어 태그 목록입니다. Kaggle은 `[]`. |\n"
         "| dataset | 데이터셋 관련 태그 목록입니다. |\n"
-        "| pipeline_tag | 파이프라인 태그 목록입니다. |"
+        "| pipeline_tag | 파이프라인 태그 목록입니다. Kaggle은 `[]`. |"
     ),
     responses={
         200: {
@@ -55,12 +57,16 @@ INTERNAL_SERVER_ERROR_MESSAGE = "Internal Server Error"
             "description": "태그 그룹 조회에 실패했습니다.",
             "content": {"application/json": {"example": {"detail": "Internal Server Error"}}},
         },
+        503: {
+            "description": "마켓 자격증명이 설정되지 않았습니다.",
+            "content": {"application/json": {"example": {"detail": "Kaggle credentials not configured"}}},
+        },
     },
 )
 async def api_tags(
     market: str = Query(
         ..., 
-        description="AI model marketplace (huggingface, aihub)", 
+        description="AI model marketplace (huggingface, kaggle)",
         examples=["huggingface"]
     ), 
     current_user: dict = Depends(get_current_user)
@@ -82,6 +88,8 @@ async def api_tags(
             await cache_data(cache_key, data)
             logger.info(f"Cached fresh data for {market} tags")
             return data
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error in api_tags: {str(e)}")
         raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR_MESSAGE)
@@ -139,7 +147,7 @@ async def api_tags_group(
     ), 
     market: str = Query(
         ..., 
-        description="AI model marketplace (huggingface, aihub)", 
+        description="AI model marketplace (huggingface, kaggle)",
         examples=["huggingface"]
     ), 
     current_user: dict = Depends(get_current_user)
@@ -161,6 +169,8 @@ async def api_tags_group(
             remaining_count = len(data) - settings.LIMIT if len(data) > settings.LIMIT else 0
             return {"data": limited_data, "remaining_count": remaining_count}
         return {"data": data, "remaining_count": 0}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error in api_tags_group: {str(e)}")
         raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR_MESSAGE)
@@ -206,6 +216,10 @@ async def api_tags_group(
             "description": "태그 그룹 전체 조회에 실패했습니다.",
             "content": {"application/json": {"example": {"detail": "Internal Server Error"}}},
         },
+        503: {
+            "description": "마켓 자격증명이 설정되지 않았습니다.",
+            "content": {"application/json": {"example": {"detail": "Kaggle credentials not configured"}}},
+        },
     },
 )
 async def api_tags_group_all(
@@ -216,7 +230,7 @@ async def api_tags_group_all(
     ), 
     market: str = Query(
         ..., 
-        description="AI model marketplace (huggingface, aihub)", 
+        description="AI model marketplace (huggingface, kaggle)",
         examples=["huggingface"]
     ), 
     current_user: dict = Depends(get_current_user)
@@ -234,6 +248,8 @@ async def api_tags_group_all(
             await cache_data(cache_key, data)
 
         return {"data": data}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error in api_tags_group_all: {str(e)}")
         raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR_MESSAGE)

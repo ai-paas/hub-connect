@@ -325,7 +325,7 @@ async def health_check():
                     "example": {
                         "is_running": True,
                         "refresh_interval": 3600,
-                        "supported_markets": ["huggingface", "aihub"],
+                        "supported_markets": ["huggingface", "kaggle"],
                         "last_refresh": {
                             "huggingface": "2026-04-15T16:09:53.144110"
                         },

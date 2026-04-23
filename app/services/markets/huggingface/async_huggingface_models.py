@@ -400,25 +400,30 @@ class AsyncHuggingFaceService:
     # Dataset Methods
     # =============================================================================
 
-    async def search_datasets(self, sort: str = "likes", page: int = 1, page_size: int = 10):
+    async def search_datasets(self, query: str = "", sort: str = "likes", page: int = 1, page_size: int = 10):
         """Search datasets from HuggingFace"""
         try:
-            url = f"https://huggingface.co/datasets-json?sort={sort}&withCount=true"
+            params = {"sort": sort, "withCount": "true"}
+            if query:
+                params["search"] = query
+            url = "https://huggingface.co/datasets-json"
             async with self.get_http_client() as http_client:
-                response = await http_client.get(url, timeout=REQUESTS_TIMEOUT)
+                response = await http_client.get(url, params=params, timeout=REQUESTS_TIMEOUT)
                 response.raise_for_status()
                 data = response.json()
-                
+
                 datasets = data.get("datasets", [])
                 start = (page - 1) * page_size
                 end = start + page_size
                 paginated_datasets = datasets[start:end]
-                
+
                 return {
                     "datasets": paginated_datasets,
                     "total": len(datasets),
                     "page": page,
-                    "page_size": page_size
+                    "page_size": page_size,
+                    "has_more": end < len(datasets),
+                    "total_is_exact": True,
                 }
         except httpx.HTTPStatusError as e:
             logger.error(f"Error searching datasets: {e}")

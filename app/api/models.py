@@ -41,14 +41,19 @@ router = APIRouter(tags=["models"])
         "models 내부 공통 필드:\n"
         "| 필드 | 설명 |\n"
         "| --- | --- |\n"
-        "| id | 모델 식별자입니다. |\n"
+        "| id | 모델 식별자입니다. HuggingFace는 `owner/repo`, Kaggle은 `owner/model/framework/variation`(4-세그먼트) 형식입니다. |\n"
         "| downloads | 다운로드 수입니다. |\n"
         "| likes | 좋아요 수입니다. |\n"
         "| lastModified | 마지막 수정 시각입니다. |\n"
         "| pipeline_tag | 대표 태스크 태그입니다. |\n"
         "| tags | 태그 목록입니다. |\n"
-        "| parameterDisplay | 사람이 읽기 쉬운 파라미터 표기입니다. |\n"
-        "| parameterRange | 파라미터 범주 정보입니다. |"
+        "| parameterDisplay | 사람이 읽기 쉬운 파라미터 표기입니다. Kaggle은 항상 `null`입니다. |\n"
+        "| parameterRange | 파라미터 범주 정보입니다. Kaggle은 항상 `null`입니다. |\n\n"
+        "추가 응답 필드 (Kaggle 포함 일부 마켓):\n"
+        "| 필드 | 설명 |\n"
+        "| --- | --- |\n"
+        "| has_more | 다음 페이지가 있을 가능성을 나타냅니다. |\n"
+        "| total_is_exact | `total`이 정확한 전체 수인지 여부입니다. Kaggle은 `false`(하한값)입니다. |"
     ),
     responses={
         200: {
@@ -85,10 +90,14 @@ router = APIRouter(tags=["models"])
             "description": "모델 목록 조회에 실패했습니다.",
             "content": {"application/json": {"example": {"detail": "Internal server error"}}},
         },
+        503: {
+            "description": "마켓 자격증명이 설정되지 않았습니다. Kaggle 사용 시 `KAGGLE_USERNAME`/`KAGGLE_KEY` 환경변수를 확인하세요.",
+            "content": {"application/json": {"example": {"detail": "Kaggle credentials not configured"}}},
+        },
     },
 )
 async def api_models(
-    market: str = Query(..., description="Market name (e.g., huggingface, aihub)"),
+    market: str = Query(..., description="Market name (e.g., huggingface, kaggle)"),
     query: str = "",
     sort: str = "downloads",
     page: int = Query(1, ge=1),
@@ -153,7 +162,7 @@ async def api_models(
         "### 입력 필드\n"
         "| 필드 | 위치 | 필수 | 설명 | 예시 |\n"
         "| --- | --- | --- | --- | --- |\n"
-        "| model_id | path | Y | 모델 저장소 ID입니다. | meta-llama/Llama-3-8B |\n"
+        "| model_id | path | Y | 모델 저장소 ID입니다. 마켓별 형식이 다릅니다. | HF: `meta-llama/Llama-3-8B`, Kaggle: `google/bert/tensorFlow2/answer-equivalence-bem` |\n"
         "| market | query | Y | 대상 마켓 이름입니다. | huggingface |\n\n"
         "### 응답 필드\n"
         "| 필드 | 설명 |\n"
@@ -164,7 +173,7 @@ async def api_models(
         "| --- | --- |\n"
         "| name | 파일명 또는 저장소 내 경로입니다. |\n"
         "| size | 사람이 읽기 쉬운 파일 크기입니다. |\n"
-        "| blob_id | 파일 blob 식별자입니다. |"
+        "| blob_id | 파일 blob 식별자입니다. Kaggle은 항상 `null`입니다. |"
     ),
     responses={
         200: {
@@ -183,6 +192,10 @@ async def api_models(
                 }
             },
         },
+        400: {
+            "description": "모델 핸들 형식이 잘못되었습니다. Kaggle은 3~4 세그먼트(`owner/model/framework[/variation]`)가 필요합니다.",
+            "content": {"application/json": {"example": {"detail": "Kaggle model handle must be 3-4 segments: owner/model/framework[/variation]"}}},
+        },
         401: {
             "description": "인증이 필요하거나 인증 정보가 올바르지 않습니다.",
             "content": {"application/json": {"example": {"detail": "Not authenticated"}}},
@@ -191,12 +204,18 @@ async def api_models(
             "description": "모델 파일 목록 조회에 실패했습니다.",
             "content": {"application/json": {"example": {"detail": "Failed to fetch model files"}}},
         },
+        503: {
+            "description": "마켓 자격증명이 설정되지 않았습니다.",
+            "content": {"application/json": {"example": {"detail": "Kaggle credentials not configured"}}},
+        },
     },
 )
 async def api_model_files(model_id: str, market: str = Query(..., description="Market name"), current_user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     try:
         market_service = await get_async_market_service(market)
         return await market_service.get_model_files(model_id)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error in api_model_files: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to fetch model files")
@@ -211,7 +230,7 @@ async def api_model_files(model_id: str, market: str = Query(..., description="M
         "### 입력 필드\n"
         "| 필드 | 위치 | 필수 | 설명 | 예시 |\n"
         "| --- | --- | --- | --- | --- |\n"
-        "| model_id | path | Y | 모델 저장소 ID입니다. | meta-llama/Llama-3-8B |\n"
+        "| model_id | path | Y | 모델 저장소 ID입니다. Kaggle은 4-세그먼트(`owner/model/framework/variation`)를 권장합니다. | google/bert/tensorFlow2/answer-equivalence-bem |\n"
         "| filename | query | Y | 다운로드할 파일명입니다. | config.json |\n"
         "| market | query | Y | 대상 마켓 이름입니다. | huggingface |\n"
         "| download_dir | query | N | 서버 내 사용자 지정 다운로드 경로입니다. | C:/downloads/models |\n\n"
@@ -240,6 +259,10 @@ async def api_model_files(model_id: str, market: str = Query(..., description="M
                 }
             },
         },
+        400: {
+            "description": "모델 핸들 형식이 잘못되었습니다. Kaggle은 3~4 세그먼트가 필요합니다.",
+            "content": {"application/json": {"example": {"detail": "Kaggle model handle must be 3-4 segments: owner/model/framework[/variation]"}}},
+        },
         401: {
             "description": "인증이 필요하거나 인증 정보가 올바르지 않습니다.",
             "content": {"application/json": {"example": {"detail": "Not authenticated"}}},
@@ -248,12 +271,18 @@ async def api_model_files(model_id: str, market: str = Query(..., description="M
             "description": "모델 파일 다운로드에 실패했습니다.",
             "content": {"application/json": {"example": {"detail": "Failed to download model file"}}},
         },
+        503: {
+            "description": "마켓 자격증명이 설정되지 않았습니다.",
+            "content": {"application/json": {"example": {"detail": "Kaggle credentials not configured"}}},
+        },
     },
 )
 async def download_model(model_id: str, filename: str, market: str = Query(..., description="Market name"), download_dir: Optional[str] = Query(None, description="Custom download directory path"), current_user: dict = Depends(get_current_user)):
     try:
         market_service = await get_async_market_service(market)
         return await market_service.download_model_file(model_id, filename, download_dir)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error in download_model: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to download model file")
@@ -267,7 +296,7 @@ async def download_model(model_id: str, filename: str, market: str = Query(..., 
         "### 입력 필드\n"
         "| 필드 | 위치 | 필수 | 설명 | 예시 |\n"
         "| --- | --- | --- | --- | --- |\n"
-        "| model_id | path | Y | 모델 저장소 ID입니다. | meta-llama/Llama-3-8B |\n"
+        "| model_id | path | Y | 모델 저장소 ID입니다. HF: `owner/repo`, Kaggle: `owner/model/framework/variation`. | google/bert/tensorFlow2/answer-equivalence-bem |\n"
         "| market | query | Y | 대상 마켓 이름입니다. | huggingface |\n\n"
         "### 응답 필드\n"
         "| 필드 | 설명 |\n"
@@ -279,6 +308,7 @@ async def download_model(model_id: str, filename: str, market: str = Query(..., 
         "| pipeline_tag | 대표 태스크 태그입니다. |\n"
         "| tags | 태그 목록입니다. |\n"
         "| card_html | 모델 카드 내용을 HTML로 변환한 값입니다. |\n"
+        "| variation_resolved | (Kaggle 전용) 요청 핸들의 framework/variation 메타가 exact match로 해결되었는지 여부입니다. `false`면 모델 레벨 정보로 폴백했습니다. |\n"
         "| 그 외 필드 | 마켓 카드 메타데이터가 추가로 포함될 수 있습니다. |"
     ),
     responses={
@@ -298,6 +328,10 @@ async def download_model(model_id: str, filename: str, market: str = Query(..., 
                 }
             },
         },
+        400: {
+            "description": "모델 핸들 형식이 잘못되었습니다. Kaggle은 3~4 세그먼트가 필요합니다.",
+            "content": {"application/json": {"example": {"detail": "Kaggle model handle must be 3-4 segments: owner/model/framework[/variation]"}}},
+        },
         401: {
             "description": "인증이 필요하거나 인증 정보가 올바르지 않습니다.",
             "content": {"application/json": {"example": {"detail": "Not authenticated"}}},
@@ -306,12 +340,18 @@ async def download_model(model_id: str, filename: str, market: str = Query(..., 
             "description": "요청한 모델을 찾을 수 없습니다.",
             "content": {"application/json": {"example": {"detail": "Model not found"}}},
         },
+        503: {
+            "description": "마켓 자격증명이 설정되지 않았습니다.",
+            "content": {"application/json": {"example": {"detail": "Kaggle credentials not configured"}}},
+        },
     },
 )
 async def api_model_detail(model_id: str, market: str = Query(..., description="Market name"), current_user: dict = Depends(get_current_user)) -> Dict[str, Any]:
     try:
         market_service = await get_async_market_service(market)
         return await market_service.get_model_detail(model_id)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error in api_model_detail: {str(e)}")
         raise HTTPException(status_code=404, detail="Model not found")

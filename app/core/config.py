@@ -64,6 +64,12 @@ class Settings(BaseSettings):
     # Dataset download settings
     DATASET_DOWNLOAD_DIR: Optional[str] = None  # Custom download directory
 
+    # Kaggle marketplace settings
+    KAGGLE_USERNAME: Optional[str] = None
+    KAGGLE_KEY: Optional[str] = None
+    KAGGLE_TIMEOUT: int = 30
+    KAGGLE_DOWNLOAD_TIMEOUT: int = 300
+
     @field_validator('SECRET_KEY')
     @classmethod
     def validate_secret_key(cls, v: str) -> str:
