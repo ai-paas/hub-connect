@@ -1,8 +1,10 @@
 import asyncio
 import time
-from typing import Callable, Any, Optional
 from enum import Enum
+from typing import Callable, Any, Optional
+
 from app.core.logging import logger
+
 
 class CircuitState(Enum):
     CLOSED = "closed"      # Normal operation

@@ -1,10 +1,13 @@
 
-import redis.asyncio as redis
 import asyncio
 from contextlib import asynccontextmanager
 from typing import Optional
+
+import redis.asyncio as redis
+
 from app.core.config import settings
 from app.core.logging import logger
+
 
 class RedisService:
     def __init__(self):

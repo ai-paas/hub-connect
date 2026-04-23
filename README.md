@@ -6,13 +6,13 @@
 
 [한국어](README.md) | [English](README_EN.md)
 
-HUB Connect API는 Hugging Face 모델/데이터셋 조회와 S3 호환 스토리지 관리를 하나의 FastAPI 서비스로 묶은 API 서버입니다.
+HUB Connect API는 Hugging Face · Kaggle 모델/데이터셋 조회와 S3 호환 스토리지 관리를 하나의 FastAPI 서비스로 묶은 API 서버입니다.
 
 ## 핵심 기능
 
-- Hugging Face 모델 검색, 상세 조회, 파일 목록, 파일 다운로드
-- Hugging Face 태그 조회와 백그라운드 캐시 갱신
-- Hugging Face 데이터셋 검색, 정보 조회, 파일 목록, 파일/스냅샷 다운로드
+- Hugging Face / Kaggle 모델 검색, 상세 조회, 파일 목록, 파일 다운로드
+- Hugging Face / Kaggle 태그 조회와 백그라운드 캐시 갱신
+- Hugging Face / Kaggle 데이터셋 검색, 정보 조회, 파일 목록, 파일/스냅샷 다운로드
 - S3 호환 스토리지 버킷/폴더/객체 관리
 - JWT 기반 관리자 인증
 - Redis 사용 시 Tus 기반 재개 가능한 업로드
@@ -24,9 +24,10 @@ HUB Connect API는 Hugging Face 모델/데이터셋 조회와 S3 호환 스토�
 |---|---|---|
 | Hugging Face models | 지원 | 주요 기능 구현됨 |
 | Hugging Face datasets | 지원 | 검색, 정보, 파일 목록, 다운로드 |
+| Kaggle models | 지원 | 핸들 형식 `owner/model/framework[/variation]`, 자격증명 필요 |
+| Kaggle datasets | 지원 | 검색, 정보, 파일 목록, 다운로드 |
 | S3-compatible storage | 지원 | AWS S3, Ceph 스타일 설정 지원 |
 | Redis + Tus uploads | 선택 기능 | Redis 설정 시 활성화 |
-| AI Hub | 제한적 | 현재 placeholder 수준, 실사용 불가 |
 
 ## 기술 스택
 
@@ -60,6 +61,10 @@ cp .env.sample .env
 ```env
 HF_API_TOKEN=your_huggingface_token
 SECRET_KEY=change-this-to-at-least-32-characters
+
+# Kaggle 연동(선택): 미설정시 market=kaggle 호출은 503 응답
+KAGGLE_USERNAME=
+KAGGLE_KEY=
 
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=admin123

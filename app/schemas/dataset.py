@@ -1,6 +1,7 @@
-from pydantic import BaseModel, RootModel
 from typing import List, Optional, Dict, Any, Union
-from enum import Enum
+
+from pydantic import BaseModel, RootModel
+
 
 class Dataset(BaseModel):
     id: str
@@ -19,6 +20,12 @@ class DatasetSearchResponse(BaseModel):
     total: int
     page: int
     page_size: int  # Keep as page_size in response for backward compatibility
+    # Pagination honesty: some markets (e.g. Kaggle) cannot report a true total.
+    # `total_is_exact=False` with `has_more=True` tells the client `total` is a
+    # lower bound and another page can be requested. HF fills these accurately;
+    # older clients that don't know about the fields can ignore them.
+    has_more: Optional[bool] = None
+    total_is_exact: Optional[bool] = None
 
 class Feature(BaseModel):
     dtype: str

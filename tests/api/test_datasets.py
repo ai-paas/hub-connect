@@ -1,6 +1,7 @@
+from unittest.mock import patch, AsyncMock
+
 import pytest
 from httpx import ASGITransport, AsyncClient
-from unittest.mock import patch, AsyncMock
 
 from app.main import app
 

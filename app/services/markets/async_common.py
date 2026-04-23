@@ -1,21 +1,19 @@
-from typing import Union
-
 # Async market service registry - import dynamically to avoid dependency issues
 ASYNC_MARKET_SERVICES = {
     "huggingface": "app.services.markets.huggingface.async_huggingface_models.AsyncHuggingFaceService",
-    "aihub": "app.services.markets.aihub.aihub_models.AihubService",  # Now has async methods
+    "kaggle": "app.services.markets.kaggle.async_kaggle_models.AsyncKaggleService",
 }
 
 async def get_async_market_service(market: str):
     """
     Factory function to get async market service instance
-    
+
     Args:
-        market: Market name (huggingface, aihub)
-        
+        market: Market name (huggingface, kaggle)
+
     Returns:
         Async market service instance
-        
+
     Raises:
         ValueError: If market is not supported
     """

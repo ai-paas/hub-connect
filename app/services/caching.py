@@ -1,6 +1,8 @@
-from aiocache import Cache
 import hashlib
 import json
+
+from aiocache import Cache
+
 from app.core.config import settings
 
 cache = Cache(Cache.MEMORY)

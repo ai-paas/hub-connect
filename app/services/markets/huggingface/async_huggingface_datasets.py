@@ -1,13 +1,16 @@
 import asyncio
 from typing import Optional, List
-from fastapi import HTTPException
-from fastapi.responses import FileResponse
+
 import httpx
-from huggingface_hub import hf_hub_download, snapshot_download, HfFileSystem, HfApi
-from huggingface_hub.utils import HfHubHTTPError
 import yaml
 from aiocache import cached
+from fastapi import HTTPException
+from fastapi.responses import FileResponse
+from huggingface_hub import hf_hub_download, snapshot_download, HfFileSystem, HfApi
+from huggingface_hub.utils import HfHubHTTPError
+
 from app.core.config import settings
+
 
 class HuggingFaceDatasetService:
     def __init__(self):
@@ -18,23 +21,28 @@ class HuggingFaceDatasetService:
         self.api = HfApi(token=settings.HF_API_TOKEN)
 
     @cached(ttl=3600)
-    async def search_datasets(self, sort: str = "likes", page: int = 1, page_size: int = 10):
+    async def search_datasets(self, query: str = "", sort: str = "likes", page: int = 1, page_size: int = 10):
         try:
-            url = f"https://huggingface.co/datasets-json?sort={sort}&withCount=true"
-            response = await self.http_client.get(url)
+            params = {"sort": sort, "withCount": "true"}
+            if query:
+                params["search"] = query
+            url = "https://huggingface.co/datasets-json"
+            response = await self.http_client.get(url, params=params)
             response.raise_for_status()
             data = response.json()
-            
+
             datasets = data.get("datasets", [])
             start = (page - 1) * page_size
             end = start + page_size
             paginated_datasets = datasets[start:end]
-            
+
             return {
                 "datasets": paginated_datasets,
                 "total": len(datasets),
                 "page": page,
-                "page_size": page_size
+                "page_size": page_size,
+                "has_more": end < len(datasets),
+                "total_is_exact": True,
             }
         except httpx.HTTPStatusError as e:
             raise HTTPException(status_code=e.response.status_code, detail=f"Error searching for datasets: {e}")

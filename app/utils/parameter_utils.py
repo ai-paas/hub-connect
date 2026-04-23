@@ -4,8 +4,8 @@ Parameter utility functions for model parameter filtering
 
 import re
 from typing import Optional, Tuple
-from fastapi import HTTPException
 
+from fastapi import HTTPException
 
 # Valid parameter pattern: numbers followed by 'B' (billions)
 PARAMETER_PATTERN = r'^(\d+(?:\.\d+)?)[B]$'

@@ -1,12 +1,13 @@
-import logging
 import asyncio
 import functools
-import httpx
-from typing import Dict, Any
+import logging
 from contextlib import asynccontextmanager
+from typing import Dict, Any
+
+import httpx
+from huggingface_hub import HfApi
 
 from app.core.config import settings
-from huggingface_hub import HfApi
 
 logger = logging.getLogger(__name__)
 

@@ -1,9 +1,10 @@
 import os
 import tempfile
+from unittest.mock import patch, AsyncMock
+
 import pytest
-from httpx import ASGITransport, AsyncClient
-from unittest.mock import patch, MagicMock, AsyncMock
 from dotenv import load_dotenv
+from httpx import ASGITransport, AsyncClient
 
 # Load .env file before tests
 load_dotenv()

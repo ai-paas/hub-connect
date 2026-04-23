@@ -1,6 +1,8 @@
-from pydantic_settings import BaseSettings
-from pydantic import field_validator, ConfigDict
 from typing import Optional, List
+
+from pydantic import field_validator, ConfigDict
+from pydantic_settings import BaseSettings
+
 
 class Settings(BaseSettings):
     HF_API_TOKEN: str
@@ -61,6 +63,12 @@ class Settings(BaseSettings):
     
     # Dataset download settings
     DATASET_DOWNLOAD_DIR: Optional[str] = None  # Custom download directory
+
+    # Kaggle marketplace settings
+    KAGGLE_USERNAME: Optional[str] = None
+    KAGGLE_KEY: Optional[str] = None
+    KAGGLE_TIMEOUT: int = 30
+    KAGGLE_DOWNLOAD_TIMEOUT: int = 300
 
     @field_validator('SECRET_KEY')
     @classmethod

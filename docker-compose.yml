@@ -78,6 +78,11 @@ services:
       - REDIS_HOST=localhost
       - REDIS_PORT=6379
       - REDIS_DB=0
+      # Kaggle credentials are passed through from .env if configured
+      - KAGGLE_USERNAME=${KAGGLE_USERNAME:-}
+      - KAGGLE_KEY=${KAGGLE_KEY:-}
+      - KAGGLE_TIMEOUT=${KAGGLE_TIMEOUT:-30}
+      - KAGGLE_DOWNLOAD_TIMEOUT=${KAGGLE_DOWNLOAD_TIMEOUT:-300}
     
     # Volume mounts
     volumes:

@@ -1,9 +1,12 @@
 import time
 from typing import Dict, Tuple
+
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
+
 from app.core.logging import logger
+
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, calls: int = 100, period: int = 60):

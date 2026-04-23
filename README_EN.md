@@ -6,13 +6,13 @@
 
 [한국어](README.md) | [English](README_EN.md)
 
-HUB Connect API is a FastAPI service that combines Hugging Face model/dataset access with S3-compatible storage management behind a single API.
+HUB Connect API is a FastAPI service that combines Hugging Face and Kaggle model/dataset access with S3-compatible storage management behind a single API.
 
 ## What It Does
 
-- Search Hugging Face models and fetch details, files, and downloads
-- Fetch Hugging Face tags with background cache warmup/refresh
-- Search Hugging Face datasets and download files or snapshots
+- Search Hugging Face / Kaggle models and fetch details, files, and downloads
+- Fetch Hugging Face / Kaggle tags with background cache warmup/refresh
+- Search Hugging Face / Kaggle datasets and download files or snapshots
 - Manage buckets, folders, and objects on S3-compatible storage
 - Authenticate admin users with JWT
 - Enable resumable uploads with Tus when Redis is configured
@@ -24,9 +24,10 @@ HUB Connect API is a FastAPI service that combines Hugging Face model/dataset ac
 |---|---|---|
 | Hugging Face models | Supported | Main feature set is implemented |
 | Hugging Face datasets | Supported | Search, info, file listing, downloads |
+| Kaggle models | Supported | Handle format `owner/model/framework[/variation]`, credentials required |
+| Kaggle datasets | Supported | Search, info, file listing, downloads |
 | S3-compatible storage | Supported | AWS S3 and Ceph-style configuration |
 | Redis + Tus uploads | Optional | Enabled only when Redis is configured |
-| AI Hub | Limited | Placeholder implementation, not production-ready |
 
 ## Tech Stack
 
@@ -60,6 +61,10 @@ Minimum values to review:
 ```env
 HF_API_TOKEN=your_huggingface_token
 SECRET_KEY=change-this-to-at-least-32-characters
+
+# Kaggle (optional): leave blank to disable; market=kaggle returns 503 when unset
+KAGGLE_USERNAME=
+KAGGLE_KEY=
 
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=admin123

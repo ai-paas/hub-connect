@@ -1,9 +1,9 @@
 import asyncio
 import re
+import time
 from contextlib import asynccontextmanager
 from typing import List
 
-import time
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,8 +20,8 @@ from app.core.config import settings
 from app.core.logging import logger, LoggingMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.services.async_service_manager import service_manager
-from app.services.redis_service import redis_service
 from app.services.background_cache import background_cache_service
+from app.services.redis_service import redis_service
 
 
 # Application lifespan management
@@ -325,7 +325,7 @@ async def health_check():
                     "example": {
                         "is_running": True,
                         "refresh_interval": 3600,
-                        "supported_markets": ["huggingface", "aihub"],
+                        "supported_markets": ["huggingface", "kaggle"],
                         "last_refresh": {
                             "huggingface": "2026-04-15T16:09:53.144110"
                         },

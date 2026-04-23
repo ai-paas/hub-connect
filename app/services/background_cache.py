@@ -1,10 +1,11 @@
 import asyncio
-from typing import Optional, Dict, List
 from datetime import datetime, timedelta
-from app.services.caching import cache_data, get_cached_data
-from app.services.markets.async_common import get_async_market_service
+from typing import Optional, Dict
+
 from app.core.config import settings
 from app.core.logging import logger
+from app.services.caching import cache_data, get_cached_data
+from app.services.markets.async_common import get_async_market_service
 
 
 class BackgroundCacheService:
@@ -13,7 +14,7 @@ class BackgroundCacheService:
     def __init__(self):
         self.is_running = False
         self.refresh_interval = 3600  # 1 hour default
-        self.cache_warmup_markets = ["huggingface", "aihub"]  # Markets to preload
+        self.cache_warmup_markets = ["huggingface", "kaggle"]  # Markets to preload
         self.background_task: Optional[asyncio.Task] = None
         self.last_refresh: Dict[str, datetime] = {}
         

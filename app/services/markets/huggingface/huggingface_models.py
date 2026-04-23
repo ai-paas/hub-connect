@@ -1,12 +1,12 @@
-from typing import Dict, Any, List
+import asyncio
+import functools
 import os
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Dict, Any
+
 import httpx
 import markdown2
 from fastapi.responses import FileResponse
 from huggingface_hub import HfApi, ModelCard, hf_hub_download
-import asyncio
-import functools
 
 from app.core.config import settings
 from app.core.logging import logger, log_external_api_call

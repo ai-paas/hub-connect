@@ -3,7 +3,7 @@ from fastapi import HTTPException
 # Centrally manage market-specific service mappings
 market_services = {
     "huggingface": "app.services.markets.huggingface.huggingface_models.HuggingFaceService",
-    "aihub": "app.services.markets.aihub.aihub_models.AihubService",
+    "kaggle": "app.services.markets.kaggle.async_kaggle_models.AsyncKaggleService",
     # Register here when other markets are added
 }
 

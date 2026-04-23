@@ -1,6 +1,8 @@
 from fastapi import Depends, HTTPException, status
+
 from app.api.auth import oauth2_scheme
 from app.services.auth_service import verify_token
+
 
 async def get_current_user(token: str = Depends(oauth2_scheme)):
     user_data = verify_token(token)

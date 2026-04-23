@@ -9,9 +9,10 @@ Example:
     python scripts/generate_password_hash.py admin123
 """
 
-import sys
-import os
 import logging
+import os
+import sys
+
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.services.auth_service import get_password_hash

@@ -1,15 +1,16 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Path
-from typing import Optional, List
 from enum import Enum
+from typing import Optional, List
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Path
 
 from app.core.auth import get_current_user
 from app.core.logging import logger
-from app.services.markets.async_common import get_async_market_service
 from app.schemas.dataset import (
     DatasetSearchResponse,
     DatasetInfoResponse,
     DatasetFileTreeResponse,
 )
+from app.services.markets.async_common import get_async_market_service
 
 router = APIRouter()
 
@@ -33,6 +34,7 @@ class DatasetSort(str, Enum):
                 "| 필드 | 위치 | 필수 | 설명 | 예시 |\n"
                 "| --- | --- | --- | --- | --- |\n"
                 "| market | query | Y | 대상 마켓 이름입니다. | huggingface |\n"
+                "| query | query | N | 검색어입니다. | titanic |\n"
                 "| sort | query | N | 정렬 기준입니다. | likes |\n"
                 "| page | query | N | 페이지 번호입니다. | 1 |\n"
                 "| limit | query | N | 페이지당 조회 개수입니다. | 10 |\n\n"
@@ -40,9 +42,11 @@ class DatasetSort(str, Enum):
                 "| 필드 | 설명 |\n"
                 "| --- | --- |\n"
                 "| datasets | 데이터셋 목록입니다. |\n"
-                "| total | 전체 데이터셋 수입니다. |\n"
+                "| total | 전체 데이터셋 수 또는 하한값입니다. `total_is_exact=false`일 때는 \"최소 이만큼\"으로 해석합니다. |\n"
                 "| page | 현재 페이지 번호입니다. |\n"
-                "| page_size | 페이지당 반환 개수입니다. |\n\n"
+                "| page_size | 페이지당 반환 개수입니다. |\n"
+                "| has_more | 다음 페이지 존재 가능성입니다. Kaggle처럼 총합을 모르는 마켓에서 참고값으로 사용합니다. |\n"
+                "| total_is_exact | `total`이 정확한 전체 수인지 여부입니다. HuggingFace는 `true`, Kaggle은 `false`. |\n\n"
                 "datasets 내부 공통 필드:\n"
                 "| 필드 | 설명 |\n"
                 "| --- | --- |\n"
@@ -88,9 +92,14 @@ class DatasetSort(str, Enum):
                     "description": "데이터셋 목록 조회에 실패했습니다.",
                     "content": {"application/json": {"example": {"detail": "Error searching datasets"}}},
                 },
+                503: {
+                    "description": "마켓 자격증명이 설정되지 않았습니다. Kaggle 사용 시 `KAGGLE_USERNAME`/`KAGGLE_KEY`를 확인하세요.",
+                    "content": {"application/json": {"example": {"detail": "Kaggle credentials not configured"}}},
+                },
             })
 async def search_datasets(
-        market: str = Query(..., description="Market name (e.g., huggingface, aihub)"),
+        market: str = Query(..., description="Market name (e.g., huggingface, kaggle)"),
+        query: str = Query("", description="Search keyword"),
         sort: DatasetSort = Query(DatasetSort.likes, description="Sort order for datasets"),
         page: int = Query(1, description="Page number for pagination"),
         limit: int = Query(10, description="Number of results per page"),
@@ -98,7 +107,11 @@ async def search_datasets(
 ):
     try:
         market_service = await get_async_market_service(market)
-        return await market_service.search_datasets(sort=sort.value, page=page, page_size=limit)
+        return await market_service.search_datasets(
+            query=query, sort=sort.value, page=page, page_size=limit
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error searching datasets: {str(e)}")
         raise HTTPException(status_code=500, detail="Error searching datasets")
@@ -117,11 +130,11 @@ async def search_datasets(
                 "### 응답 필드\n"
                 "| 필드 | 설명 |\n"
                 "| --- | --- |\n"
-                "| dataset_info | 설정별 데이터셋 상세 정보입니다. |\n"
+                "| dataset_info | 설정별 데이터셋 상세 정보입니다. Kaggle은 features/splits 메타가 없어 항상 빈 객체입니다. |\n"
                 "| pending | 아직 준비 중인 항목 목록입니다. |\n"
                 "| failed | 조회 실패 항목 목록입니다. |\n"
-                "| partial | 일부만 조회되었는지 여부입니다. |\n"
-                "| cardData | README 카드 메타데이터입니다. |"
+                "| partial | 일부만 조회되었는지 여부입니다. Kaggle은 항상 `true`입니다. |\n"
+                "| cardData | README 카드 메타데이터입니다. Kaggle은 description/license/tags/size_bytes/usability_rating/last_updated를 여기로 노출합니다. |"
             ),
             responses={
                 200: {
@@ -156,15 +169,21 @@ async def search_datasets(
                     "description": "요청한 데이터셋을 찾을 수 없습니다.",
                     "content": {"application/json": {"example": {"detail": "Dataset not found"}}},
                 },
+                503: {
+                    "description": "마켓 자격증명이 설정되지 않았습니다.",
+                    "content": {"application/json": {"example": {"detail": "Kaggle credentials not configured"}}},
+                },
             })
 async def get_dataset_info(
         repo_id: str = Path(..., description="The ID of the dataset repository"),
-        market: str = Query(..., description="Market name (e.g., huggingface, aihub)"),
+        market: str = Query(..., description="Market name (e.g., huggingface, kaggle)"),
         current_user: dict = Depends(get_current_user)
 ):
     try:
         market_service = await get_async_market_service(market)
         return await market_service.get_dataset_info(repo_id=repo_id)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting dataset info: {str(e)}")
         raise HTTPException(status_code=404, detail="Dataset not found")
@@ -218,15 +237,21 @@ async def get_dataset_info(
                     "description": "데이터셋 파일 목록 조회에 실패했습니다.",
                     "content": {"application/json": {"example": {"detail": "Failed to fetch dataset files"}}},
                 },
+                503: {
+                    "description": "마켓 자격증명이 설정되지 않았습니다.",
+                    "content": {"application/json": {"example": {"detail": "Kaggle credentials not configured"}}},
+                },
             })
 async def get_dataset_files(
         repo_id: str = Path(..., description="The ID of the dataset repository"),
-        market: str = Query(..., description="Market name (e.g., huggingface, aihub)"),
+        market: str = Query(..., description="Market name (e.g., huggingface, kaggle)"),
         current_user: dict = Depends(get_current_user)
 ):
     try:
         market_service = await get_async_market_service(market)
         return await market_service.get_dataset_files(repo_id=repo_id)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting dataset files: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to fetch dataset files")
@@ -279,11 +304,15 @@ async def get_dataset_files(
                     "description": "데이터셋 파일 다운로드에 실패했습니다.",
                     "content": {"application/json": {"example": {"detail": "Failed to download dataset file"}}},
                 },
+                503: {
+                    "description": "마켓 자격증명이 설정되지 않았습니다.",
+                    "content": {"application/json": {"example": {"detail": "Kaggle credentials not configured"}}},
+                },
             })
 async def download_dataset_file(
         repo_id: str = Path(..., description="The ID of the dataset repository"),
         filename: str = Path(..., description="The name of the file to download"),
-        market: str = Query(..., description="Market name (e.g., huggingface, aihub)"),
+        market: str = Query(..., description="Market name (e.g., huggingface, kaggle)"),
         revision: Optional[str] = Query(None, description="The revision of the file to download"),
         download_dir: Optional[str] = Query(None, description="Custom download directory path"),
         current_user: dict = Depends(get_current_user)
@@ -291,6 +320,8 @@ async def download_dataset_file(
     try:
         market_service = await get_async_market_service(market)
         return await market_service.download_file(repo_id=repo_id, filename=filename, revision=revision, download_dir=download_dir)
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error downloading dataset file: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to download dataset file")
@@ -316,7 +347,8 @@ async def download_dataset_file(
                 "| snapshot_path | 저장된 스냅샷 경로입니다. |\n"
                 "| repo_id | 대상 데이터셋 ID입니다. |\n"
                 "| total_files | 사용자 지정 경로 다운로드 시 저장된 파일 수입니다. |\n"
-                "| message | 캐시 다운로드 시 안내 메시지입니다. |"
+                "| message | 캐시 다운로드 시 안내 메시지입니다. |\n"
+                "| filters_applied | (Kaggle 전용) allow/ignore 패턴이 실제 적용되었는지 여부입니다. |"
             ),
             responses={
                 200: {
@@ -336,14 +368,26 @@ async def download_dataset_file(
                     "description": "인증이 필요하거나 인증 정보가 올바르지 않습니다.",
                     "content": {"application/json": {"example": {"detail": "Not authenticated"}}},
                 },
+                404: {
+                    "description": "(allow/ignore 패턴 지정 시) 패턴과 매칭되는 파일이 없습니다.",
+                    "content": {"application/json": {"example": {"detail": "No files match the requested allow/ignore patterns for this Kaggle dataset"}}},
+                },
                 500: {
                     "description": "데이터셋 스냅샷 다운로드에 실패했습니다.",
                     "content": {"application/json": {"example": {"detail": "Failed to download dataset snapshot"}}},
                 },
+                501: {
+                    "description": "현재 설치된 Kaggle SDK가 파일 목록 조회 기능을 제공하지 않아 필터링 스냅샷을 지원할 수 없습니다. `allow_patterns`/`ignore_patterns`를 제거하거나 kaggle 패키지를 업그레이드하세요.",
+                    "content": {"application/json": {"example": {"detail": "Filtered snapshot download is not supported: the installed Kaggle SDK does not expose a file-listing method. Upgrade the kaggle package or omit allow_patterns/ignore_patterns."}}},
+                },
+                503: {
+                    "description": "마켓 자격증명이 설정되지 않았습니다.",
+                    "content": {"application/json": {"example": {"detail": "Kaggle credentials not configured"}}},
+                },
             })
 async def download_dataset_snapshot(
         repo_id: str = Path(..., description="The ID of the dataset repository"),
-        market: str = Query(..., description="Market name (e.g., huggingface, aihub)"),
+        market: str = Query(..., description="Market name (e.g., huggingface, kaggle)"),
         revision: Optional[str] = Query(None, description="The revision of the repository to download"),
         allow_patterns: Optional[List[str]] = Query(None, description="Patterns to allow for snapshot download"),
         ignore_patterns: Optional[List[str]] = Query(None, description="Patterns to ignore for snapshot download"),
@@ -359,6 +403,8 @@ async def download_dataset_snapshot(
             ignore_patterns=ignore_patterns,
             download_dir=download_dir
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error downloading dataset snapshot: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to download dataset snapshot")
