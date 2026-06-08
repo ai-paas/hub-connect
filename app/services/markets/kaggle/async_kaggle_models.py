@@ -18,6 +18,10 @@ from app.services.markets.kaggle.handle import (
     parse_model_handle,
 )
 from app.services.markets.kaggle.kaggle_client import get_kaggle_client
+from app.services.markets.kaggle.internal_client import (
+    KAGGLE_TOTAL_CAP,
+    fetch_model_totals,
+)
 from app.services.markets.kaggle.mappers import (
     to_dataset_info_response,
     to_dataset_item,
@@ -124,18 +128,50 @@ class AsyncKaggleService:
         )
 
     @staticmethod
-    def _paginated_total(page: int, page_size: int, returned: int) -> Dict[str, Any]:
-        """Return best-effort pagination metadata.
+    def _paginated_total(
+        page: int,
+        page_size: int,
+        returned: int,
+        exact_total: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Return pagination metadata, preferring an upstream exact total.
 
-        Kaggle's list endpoints do not surface an upstream total, so we report a
-        lower bound (``(page-1)*page_size + len(items)``) and a ``has_more``
-        hint that's ``True`` whenever we got a full page back. Clients should
-        treat ``total`` as "at least this many" rather than an authoritative
-        count.
+        ``exact_total`` is the count from Kaggle (internal ``ModelService`` first,
+        public ``ModelApiService`` as fallback). Three cases:
+
+        * ``exact_total`` below the cap -> trusted exact count
+          (``total_is_exact=True``).
+        * ``exact_total`` at/above ``KAGGLE_TOTAL_CAP`` (10000) -> Kaggle caps the
+          count there, so it's a lower bound (``total_is_exact=False``,
+          ``has_more=True``).
+        * ``exact_total`` is ``None`` (datasets, or no count available) -> derive
+          a lower bound from the page position
+          (``(page-1)*page_size + len(items)``).
         """
         effective_page = max(1, page)
         effective_page_size = max(1, page_size)
         seen_so_far = (effective_page - 1) * effective_page_size + returned
+
+        if exact_total is not None:
+            total = int(exact_total)
+            if total < seen_so_far:
+                # Upstream total trails the items we've already paged through
+                # (e.g. an org-filtered count against an all-owners item list);
+                # report a lower bound rather than a number smaller than shown.
+                return {
+                    "total": seen_so_far,
+                    "total_is_exact": False,
+                    "has_more": returned >= effective_page_size,
+                }
+            if total >= KAGGLE_TOTAL_CAP:
+                # Kaggle ceilings the count at the cap; real total is higher.
+                return {"total": total, "total_is_exact": False, "has_more": True}
+            return {
+                "total": total,
+                "total_is_exact": True,
+                "has_more": seen_so_far < total,
+            }
+
         has_more = returned >= effective_page_size
         return {
             "total": seen_so_far,
@@ -147,8 +183,28 @@ class AsyncKaggleService:
     # Models
     # =============================================================================
 
-    def _model_list_sync(self, *, search: str, sort_by: str, page_size: int, page: int, owner: Optional[str] = None) -> List[Any]:
+    def _model_list_sync(self, *, search: str, sort_by: str, page_size: int, page: int, owner: Optional[str] = None) -> Dict[str, Any]:
+        """List one page of models as ``{"items": [...], "total": Optional[int]}``.
+
+        ``total`` is Kaggle's authoritative ``total_results`` count when the
+        installed SDK exposes the low-level client (so pagination can report an
+        exact total). It is ``None`` when only the high-level ``model_list``
+        helper is reachable, because that helper discards the upstream count;
+        the caller then derives a best-effort lower bound.
+        """
         api = get_kaggle_client()
+
+        low_level = self._model_list_lowlevel(
+            api,
+            search=search,
+            sort_by=sort_by,
+            page_size=page_size,
+            page=page,
+            owner=owner,
+        )
+        if low_level is not None:
+            return low_level
+
         kwargs: Dict[str, Any] = {
             "sort_by": sort_by,
             "page_size": page_size,
@@ -157,7 +213,7 @@ class AsyncKaggleService:
         if owner:
             kwargs["owner"] = owner
         try:
-            return self._call_sdk(
+            items = self._call_sdk(
                 api,
                 ["model_list", "models_list"],
                 **kwargs,
@@ -165,7 +221,68 @@ class AsyncKaggleService:
             )
         except TypeError:
             # Older SDKs don't accept page_token; fall back without it.
-            return self._call_sdk(api, ["model_list", "models_list"], **kwargs)
+            items = self._call_sdk(api, ["model_list", "models_list"], **kwargs)
+        return {"items": list(items or []), "total": None}
+
+    def _model_list_lowlevel(
+        self,
+        api: Any,
+        *,
+        search: str,
+        sort_by: str,
+        page_size: int,
+        page: int,
+        owner: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch a models page via the low-level kagglesdk client to read ``total_results``.
+
+        The high-level ``KaggleApi.model_list`` helper returns only the page
+        items and throws away the ``total_results`` count that the underlying
+        ``ListModels`` RPC returns. We replicate its request setup against the
+        low-level client so we can surface that exact total.
+
+        Returns ``{"items": [...], "total": int}`` on success, or ``None`` when
+        the installed SDK lacks the low-level surface (the caller then falls
+        back to the high-level helper). Genuine upstream errors (auth, network,
+        5xx) propagate so the router can map them to the right status code.
+        """
+        build_client = getattr(api, "build_kaggle_client", None)
+        if not callable(build_client):
+            return None
+        try:
+            from kagglesdk.models.types.model_api_service import ApiListModelsRequest
+            from kagglesdk.models.types.model_enums import ListModelsOrderBy
+        except ImportError:
+            return None
+
+        order_by = ListModelsOrderBy.LIST_MODELS_ORDER_BY_HOTNESS
+        valid = getattr(api, "valid_model_sort_bys", None)
+        if sort_by and (valid is None or sort_by in valid):
+            try:
+                order_by = api.lookup_enum(ListModelsOrderBy, order_by, sort_by)
+            except Exception:  # unknown sort key -> keep the hotness default
+                order_by = ListModelsOrderBy.LIST_MODELS_ORDER_BY_HOTNESS
+
+        request = ApiListModelsRequest()
+        request.sort_by = order_by
+        request.search = search or ""
+        request.owner = owner or ""
+        request.page_size = page_size
+        # Preserve the existing page->page_token mapping used by the high-level path.
+        if page and page > 1:
+            request.page_token = str(page)
+
+        with build_client() as kaggle:
+            client = getattr(getattr(kaggle, "models", None), "model_api_client", None)
+            list_models = getattr(client, "list_models", None)
+            if not callable(list_models):
+                return None
+            response = list_models(request)
+
+        if not hasattr(response, "total_results"):
+            return None
+        items = list(getattr(response, "models", None) or [])
+        return {"items": items, "total": int(getattr(response, "total_results", 0) or 0)}
 
     async def _list_models(
         self,
@@ -177,19 +294,52 @@ class AsyncKaggleService:
     ) -> Dict[str, Any]:
         sort_by = _MODEL_SORT_MAP.get(sort, "hotness")
         effective_limit = max(1, min(limit, 100))
-        raw_items = await self._call(
+        raw = await self._call(
             self._model_list_sync,
             search=query or "",
             sort_by=sort_by,
             page_size=effective_limit,
             page=max(1, page),
         )
-        items = list(raw_items or [])
+        items = list(raw.get("items") or [])
         models = [to_model_item(item) for item in items]
-        return {
+
+        # Primary count source: Kaggle's internal ModelService (accurate
+        # totalResults + variation count, matching kaggle.com/models). Falls
+        # back to the public SDK total_results (capped at 10000) when the
+        # internal call fails for any reason.
+        internal = await self._fetch_internal_total(query or "")
+        if internal is not None:
+            exact_total: Optional[int] = internal["total_results"]
+            total_instances: Optional[int] = internal["total_model_instances"]
+        else:
+            exact_total = raw.get("total")
+            total_instances = None
+
+        result: Dict[str, Any] = {
             "models": models,
-            **self._paginated_total(page, effective_limit, len(models)),
+            **self._paginated_total(
+                page, effective_limit, len(models), exact_total=exact_total
+            ),
         }
+        if total_instances is not None:
+            result["total_model_instances"] = total_instances
+        return result
+
+    async def _fetch_internal_total(self, search: str) -> Optional[Dict[str, int]]:
+        """Best-effort fetch of accurate model totals from Kaggle's internal API.
+
+        Returns ``None`` (so the caller falls back to the public total) on any
+        failure or timeout; ``fetch_model_totals`` itself never raises.
+        """
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(fetch_model_totals, search),
+                timeout=self._timeout,
+            )
+        except Exception as exc:
+            logger.warning("Internal Kaggle total fetch failed: %s", exc)
+            return None
 
     async def get_trending_models(
         self,

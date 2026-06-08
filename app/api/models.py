@@ -53,7 +53,8 @@ router = APIRouter(tags=["models"])
         "| 필드 | 설명 |\n"
         "| --- | --- |\n"
         "| has_more | 다음 페이지가 있을 가능성을 나타냅니다. |\n"
-        "| total_is_exact | `total`이 정확한 전체 수인지 여부입니다. Kaggle은 `false`(하한값)입니다. |"
+        "| total_is_exact | `total`이 정확한 전체 수인지 여부입니다. 전체 수가 10000(Kaggle 상한)에 도달하면 `false`(하한값)입니다. |\n"
+        "| total_model_instances | (Kaggle 모델 전용) 모델의 파라미터별 변형 총 개수입니다. Kaggle 내부 API 조회 성공 시에만 포함됩니다. |"
     ),
     responses={
         200: {
