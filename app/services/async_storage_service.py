@@ -2,7 +2,7 @@ import asyncio
 import os
 import time
 import uuid
-from email.utils import format_datetime
+from email.utils import formatdate
 from typing import List, Dict, Any
 
 import aiofiles
@@ -558,8 +558,10 @@ class AsyncStorageService:
             response = await self.s3_client.get_object(Bucket=bucket_name, Key=file_key)
 
             last_modified = response.get("LastModified", "")
-            if hasattr(last_modified, "tzinfo"):
-                last_modified = format_datetime(last_modified, usegmt=True)
+            if hasattr(last_modified, "timestamp"):
+                # botocore tags LastModified with dateutil tzutc(), which is != datetime.timezone.utc,
+                # so format_datetime(..., usegmt=True) would raise. formatdate(epoch) sidesteps tzinfo entirely.
+                last_modified = formatdate(last_modified.timestamp(), usegmt=True)
 
             metadata = {
                 "content_length": response["ContentLength"],
@@ -569,11 +571,11 @@ class AsyncStorageService:
             }
 
             async def _generate():
+                # aiobotocore StreamingBody.__aenter__ yields the raw aiohttp
+                # ClientResponse, whose .read() takes no size arg. Stream via the
+                # underlying StreamReader to avoid buffering the whole object.
                 async with response["Body"] as stream:
-                    while True:
-                        chunk = await stream.read(chunk_size)
-                        if not chunk:
-                            break
+                    async for chunk in stream.content.iter_chunked(chunk_size):
                         yield chunk
 
             return _generate(), metadata
