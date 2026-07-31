@@ -1,5 +1,6 @@
 import asyncio
 import fnmatch
+import inspect
 import os
 import shutil
 import tempfile
@@ -8,6 +9,7 @@ from typing import Any, Dict, List, Optional
 import markdown2
 from fastapi import HTTPException
 from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 
 from app.core.config import settings
 from app.core.logging import logger
@@ -20,6 +22,7 @@ from app.services.markets.kaggle.handle import (
 from app.services.markets.kaggle.kaggle_client import get_kaggle_client
 from app.services.markets.kaggle.internal_client import (
     KAGGLE_TOTAL_CAP,
+    fetch_model_downloads,
     fetch_model_totals,
 )
 from app.services.markets.kaggle.mappers import (
@@ -68,6 +71,26 @@ _MODEL_FRAMEWORK_TAGS = [
 ]
 
 
+def _response_files(response: Any) -> List[Any]:
+    if hasattr(response, "files"):
+        return list(response.files or [])
+    if isinstance(response, dict):
+        return list(response.get("files") or response.get("datasetFiles") or [])
+    if isinstance(response, list):
+        return response
+    return []
+
+
+def _response_next_page_token(response: Any) -> Optional[str]:
+    if isinstance(response, dict):
+        return response.get("nextPageToken") or response.get("next_page_token")
+    return getattr(response, "nextPageToken", None) or getattr(
+        response,
+        "next_page_token",
+        None,
+    )
+
+
 class AsyncKaggleService:
     """Kaggle marketplace adapter matching the HuggingFace async service surface."""
 
@@ -95,7 +118,11 @@ class AsyncKaggleService:
                 status,
                 exc,
             )
-            raise HTTPException(status_code=status, detail=str(exc)) from exc
+            detail = {
+                401: "Kaggle authentication failed",
+                404: "Kaggle resource not found",
+            }.get(status, "Kaggle upstream request failed")
+            raise HTTPException(status_code=status, detail=detail) from exc
 
     @staticmethod
     def _map_kaggle_status(exc: Exception) -> int:
@@ -111,6 +138,17 @@ class AsyncKaggleService:
         return 502
 
     @staticmethod
+    def _sdk_method(api: Any, candidates: List[str]):
+        """Return the first callable SDK alias."""
+        for name in candidates:
+            method = getattr(api, name, None)
+            if callable(method):
+                return method
+        raise AttributeError(
+            f"None of {candidates!r} are available on the installed Kaggle SDK"
+        )
+
+    @staticmethod
     def _call_sdk(api: Any, candidates: List[str], *args, **kwargs) -> Any:
         """Invoke the first method on `api` whose name appears in `candidates`.
 
@@ -119,13 +157,47 @@ class AsyncKaggleService:
         etc.) so we probe a short list of known aliases rather than hard-coding
         a single name.
         """
-        for name in candidates:
-            method = getattr(api, name, None)
-            if callable(method):
-                return method(*args, **kwargs)
-        raise AttributeError(
-            f"None of {candidates!r} are available on the installed Kaggle SDK"
+        return AsyncKaggleService._sdk_method(api, candidates)(*args, **kwargs)
+
+    @staticmethod
+    def _model_instance_get_from_api(api: Any, handle) -> Any:
+        """Call the Kaggle 2.x string API with a 1.x positional fallback."""
+        method = AsyncKaggleService._sdk_method(
+            api,
+            ["model_instance_get", "models_instance_get"],
         )
+        handle_str = format_model_id(handle)
+        try:
+            parameters = list(inspect.signature(method).parameters.values())
+        except (TypeError, ValueError):
+            parameters = []
+        positional = [
+            parameter
+            for parameter in parameters
+            if parameter.kind
+            in (parameter.POSITIONAL_ONLY, parameter.POSITIONAL_OR_KEYWORD)
+        ]
+        has_varargs = any(
+            parameter.kind == parameter.VAR_POSITIONAL for parameter in parameters
+        )
+        if not has_varargs and len(positional) >= 4:
+            return method(
+                handle.owner,
+                handle.model,
+                handle.framework,
+                handle.variation,
+            )
+        if has_varargs:
+            try:
+                return method(handle_str)
+            except TypeError:
+                return method(
+                    handle.owner,
+                    handle.model,
+                    handle.framework,
+                    handle.variation,
+                )
+        return method(handle_str)
 
     @staticmethod
     def _paginated_total(
@@ -207,22 +279,20 @@ class AsyncKaggleService:
 
         kwargs: Dict[str, Any] = {
             "sort_by": sort_by,
-            "page_size": page_size,
+            "page_size": page_size * max(1, page),
             "search": search or "",
         }
         if owner:
             kwargs["owner"] = owner
-        try:
-            items = self._call_sdk(
-                api,
-                ["model_list", "models_list"],
-                **kwargs,
-                page_token=str(page) if page > 1 else None,
-            )
-        except TypeError:
-            # Older SDKs don't accept page_token; fall back without it.
-            items = self._call_sdk(api, ["model_list", "models_list"], **kwargs)
-        return {"items": list(items or []), "total": None}
+        items = self._call_sdk(api, ["model_list", "models_list"], **kwargs)
+        start = (max(1, page) - 1) * page_size
+        all_items = list(items or [])
+        page_items = (
+            all_items[start:start + page_size]
+            if len(all_items) > page_size
+            else all_items[:page_size]
+        )
+        return {"items": page_items, "total": None}
 
     def _model_list_lowlevel(
         self,
@@ -268,18 +338,27 @@ class AsyncKaggleService:
         request.search = search or ""
         request.owner = owner or ""
         request.page_size = page_size
-        # Preserve the existing page->page_token mapping used by the high-level path.
-        if page and page > 1:
-            request.page_token = str(page)
 
         with build_client() as kaggle:
             client = getattr(getattr(kaggle, "models", None), "model_api_client", None)
             list_models = getattr(client, "list_models", None)
             if not callable(list_models):
                 return None
-            response = list_models(request)
+            response = None
+            page_token = None
+            for current_page in range(1, max(1, page) + 1):
+                request.page_token = page_token
+                response = list_models(request)
+                if current_page == max(1, page):
+                    break
+                page_token = getattr(response, "next_page_token", None)
+                if not page_token:
+                    return {
+                        "items": [],
+                        "total": int(getattr(response, "total_results", 0) or 0),
+                    }
 
-        if not hasattr(response, "total_results"):
+        if response is None or not hasattr(response, "total_results"):
             return None
         items = list(getattr(response, "models", None) or [])
         return {"items": items, "total": int(getattr(response, "total_results", 0) or 0)}
@@ -304,11 +383,30 @@ class AsyncKaggleService:
         items = list(raw.get("items") or [])
         models = [to_model_item(item) for item in items]
 
+        # Kaggle's public ListModels JSON no longer carries a per-model
+        # downloadCount, so mapped ``downloads`` come out 0. Recover the real
+        # counts (the ones kaggle.com shows) from the internal ModelService by
+        # model id; on any failure the zeros simply remain.
+        pending_ids = [
+            self._raw_model_id(item)
+            for item, model in zip(items, models)
+            if not model.get("downloads")
+        ]
+        pending_ids = [model_id for model_id in pending_ids if model_id is not None]
+
         # Primary count source: Kaggle's internal ModelService (accurate
         # totalResults + variation count, matching kaggle.com/models). Falls
         # back to the public SDK total_results (capped at 10000) when the
         # internal call fails for any reason.
-        internal = await self._fetch_internal_total(query or "")
+        internal, downloads = await asyncio.gather(
+            self._fetch_internal_total(query or ""),
+            self._fetch_internal_downloads(pending_ids),
+        )
+        if downloads:
+            for item, model in zip(items, models):
+                model_id = self._raw_model_id(item)
+                if not model.get("downloads") and model_id in downloads:
+                    model["downloads"] = downloads[model_id]
         if internal is not None:
             exact_total: Optional[int] = internal["total_results"]
             total_instances: Optional[int] = internal["total_model_instances"]
@@ -341,6 +439,34 @@ class AsyncKaggleService:
             logger.warning("Internal Kaggle total fetch failed: %s", exc)
             return None
 
+    @staticmethod
+    def _raw_model_id(item: Any) -> Optional[int]:
+        """Numeric Kaggle model id from a raw list/detail payload, else ``None``."""
+        raw = item.get("id") if isinstance(item, dict) else getattr(item, "id", None)
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return None
+
+    async def _fetch_internal_downloads(
+        self, model_ids: List[int]
+    ) -> Optional[Dict[int, int]]:
+        """Best-effort per-model download counts from Kaggle's internal API.
+
+        Returns ``None`` (callers keep the mapped zeros) when there is nothing
+        to look up or on any failure; ``fetch_model_downloads`` never raises.
+        """
+        if not model_ids:
+            return None
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(fetch_model_downloads, model_ids),
+                timeout=self._timeout,
+            )
+        except Exception as exc:
+            logger.warning("Internal Kaggle downloads fetch failed: %s", exc)
+            return None
+
     async def get_trending_models(
         self,
         page: int,
@@ -354,8 +480,14 @@ class AsyncKaggleService:
         apps: Optional[List[str]] = None,
         inference_provider: Optional[List[str]] = None,
         other: Optional[List[str]] = None,
+        limit: int = 30,
     ) -> Dict[str, Any]:
-        return await self._list_models(query=query, sort="hotness", page=page, limit=30)
+        return await self._list_models(
+            query=query,
+            sort="hotness",
+            page=page,
+            limit=limit,
+        )
 
     async def search_models(
         self,
@@ -393,14 +525,7 @@ class AsyncKaggleService:
         instance: Any = None
         if handle.framework and handle.variation and handle.variation != "default":
             try:
-                instance = self._call_sdk(
-                    api,
-                    ["model_instance_get", "models_instance_get"],
-                    handle.owner,
-                    handle.model,
-                    handle.framework,
-                    handle.variation,
-                )
+                instance = self._model_instance_get_from_api(api, handle)
             except Exception as err:  # variation missing -> fall back to model-level
                 logger.warning(
                     "model_instance_get failed for %s/%s/%s/%s: %s",
@@ -415,6 +540,35 @@ class AsyncKaggleService:
 
     def _model_instance_files_sync(self, handle) -> List[Any]:
         api = get_kaggle_client()
+        handle_str = format_model_id(handle)
+        try:
+            method = self._sdk_method(
+                api,
+                ["model_instance_files", "models_instance_files"],
+            )
+        except AttributeError:
+            method = None
+        if method is not None:
+            files: List[Any] = []
+            page_token = None
+            seen_tokens = set()
+            while True:
+                result = (
+                    method(handle_str)
+                    if page_token is None
+                    else method(
+                        handle_str,
+                        page_token=page_token,
+                        page_size=100,
+                    )
+                )
+                files.extend(_response_files(result))
+                next_page_token = _response_next_page_token(result)
+                if not next_page_token or next_page_token in seen_tokens:
+                    return files
+                seen_tokens.add(next_page_token)
+                page_token = next_page_token
+
         candidates = [
             (
                 ["model_instance_version_list_files", "models_instance_version_list_files"],
@@ -434,12 +588,8 @@ class AsyncKaggleService:
             except Exception as err:
                 last_err = err
                 continue
-            if hasattr(result, "files"):
-                return list(result.files or [])
-            if isinstance(result, dict) and "files" in result:
-                return list(result["files"] or [])
-            if isinstance(result, list):
-                return result
+            if hasattr(result, "files") or isinstance(result, (dict, list)):
+                return _response_files(result)
         if last_err is not None:
             raise last_err
         raise RuntimeError("No compatible Kaggle model files API found")
@@ -459,14 +609,38 @@ class AsyncKaggleService:
 
     def _download_model_files_sync(self, handle, target_dir: str) -> None:
         api = get_kaggle_client()
-        handle_str = f"{handle.owner}/{handle.model}/{handle.framework}/{handle.variation}"
+        handle_str = format_model_id(handle)
         if hasattr(api, "model_instance_version_download"):
-            api.model_instance_version_download(
-                owner_slug=handle.owner,
-                model_slug=handle.model,
-                framework=handle.framework,
-                instance_slug=handle.variation,
-                version_number=None,
+            method = api.model_instance_version_download
+            try:
+                parameter_names = set(inspect.signature(method).parameters)
+            except (TypeError, ValueError):
+                parameter_names = set()
+            if "owner_slug" in parameter_names:
+                method(
+                    owner_slug=handle.owner,
+                    model_slug=handle.model,
+                    framework=handle.framework,
+                    instance_slug=handle.variation,
+                    version_number=None,
+                    path=target_dir,
+                    force=False,
+                    quiet=True,
+                    untar=False,
+                )
+                return
+
+            instance = self._model_instance_get_from_api(api, handle)
+            version_number = (
+                instance.get("versionNumber") or instance.get("version_number")
+                if isinstance(instance, dict)
+                else getattr(instance, "version_number", None)
+                or getattr(instance, "versionNumber", None)
+            )
+            if not version_number:
+                raise RuntimeError("Kaggle model instance version is unavailable")
+            method(
+                f"{handle_str}/{version_number}",
                 path=target_dir,
                 force=False,
                 quiet=True,
@@ -491,6 +665,7 @@ class AsyncKaggleService:
     ):
         handle = parse_model_handle(model_id)
         tmp_dir = tempfile.mkdtemp(prefix="kaggle_model_")
+        cleanup_in_finally = True
         try:
             await self._call(
                 self._download_model_files_sync,
@@ -518,13 +693,20 @@ class AsyncKaggleService:
                     "model_id": format_model_id(handle),
                 }
 
-            return FileResponse(
+            response = FileResponse(
                 source_path,
                 media_type="application/octet-stream",
                 filename=os.path.basename(source_path),
+                background=BackgroundTask(
+                    shutil.rmtree,
+                    tmp_dir,
+                    ignore_errors=True,
+                ),
             )
+            cleanup_in_finally = False
+            return response
         finally:
-            if download_dir:
+            if cleanup_in_finally:
                 shutil.rmtree(tmp_dir, ignore_errors=True)
 
     async def get_model_detail(self, model_id: str) -> Dict[str, Any]:
@@ -560,6 +742,13 @@ class AsyncKaggleService:
         # Expose whether we resolved a variation-specific payload so clients can
         # tell apart partial (model-level only) responses from exact matches.
         detail["variation_resolved"] = instance is not None
+        if not detail.get("downloads"):
+            model_id = self._raw_model_id(model_level)
+            downloads = await self._fetch_internal_downloads(
+                [model_id] if model_id is not None else []
+            )
+            if downloads and model_id in downloads:
+                detail["downloads"] = downloads[model_id]
         return detail
 
     # =============================================================================
@@ -592,21 +781,41 @@ class AsyncKaggleService:
             "language": [],
             "dataset": dataset_tags,
             "pipeline_tag": [],
+            "deploy": [],
         }
 
     # =============================================================================
     # Datasets
     # =============================================================================
 
-    def _datasets_list_sync(self, *, search: str, sort_by: str, page: int) -> List[Any]:
+    def _datasets_list_sync(
+        self,
+        *,
+        search: str,
+        sort_by: str,
+        page: int,
+        page_size: int,
+    ) -> List[Any]:
         api = get_kaggle_client()
-        return self._call_sdk(
-            api,
-            ["dataset_list", "datasets_list"],
-            search=search or "",
-            sort_by=sort_by,
-            page=max(1, page),
-        )
+        upstream_page_size = 20
+        effective_page = max(1, page)
+        effective_page_size = max(1, page_size)
+        start = (effective_page - 1) * effective_page_size
+        end = start + effective_page_size
+        first_upstream_page = start // upstream_page_size + 1
+        last_upstream_page = (end - 1) // upstream_page_size + 1
+        items: List[Any] = []
+        for upstream_page in range(first_upstream_page, last_upstream_page + 1):
+            page_items = self._call_sdk(
+                api,
+                ["dataset_list", "datasets_list"],
+                search=search or "",
+                sort_by=sort_by,
+                page=upstream_page,
+            )
+            items.extend(page_items or [])
+        offset = start - (first_upstream_page - 1) * upstream_page_size
+        return items[offset:offset + effective_page_size]
 
     async def search_datasets(
         self,
@@ -621,6 +830,7 @@ class AsyncKaggleService:
             search=query,
             sort_by=sort_by,
             page=page,
+            page_size=page_size,
         )
         items = list(raw_items or [])
         effective_page_size = page_size if page_size and page_size > 0 else len(items)
@@ -636,11 +846,23 @@ class AsyncKaggleService:
 
     def _dataset_view_sync(self, handle) -> Any:
         api = get_kaggle_client()
-        return self._call_sdk(
-            api,
-            ["dataset_view", "datasets_view", "dataset_get", "datasets_get"],
-            format_dataset_id(handle),
-        )
+        try:
+            return self._call_sdk(
+                api,
+                ["dataset_view", "datasets_view", "dataset_get", "datasets_get"],
+                format_dataset_id(handle),
+            )
+        except AttributeError:
+            build_client = getattr(api, "build_kaggle_client", None)
+            if not callable(build_client):
+                raise
+            from kagglesdk.datasets.types.dataset_api_service import ApiGetDatasetRequest
+
+            request = ApiGetDatasetRequest()
+            request.owner_slug = handle.owner
+            request.dataset_slug = handle.slug
+            with build_client() as kaggle:
+                return kaggle.datasets.dataset_api_client.get_dataset(request)
 
     def _dataset_list_files_sync(self, handle) -> Any:
         """Look up a dataset's files, returning ``None`` ONLY when no SDK alias exists.
@@ -653,14 +875,32 @@ class AsyncKaggleService:
         """
         api = get_kaggle_client()
         try:
-            return self._call_sdk(
+            method = self._sdk_method(
                 api,
                 ["dataset_list_files", "datasets_list_files"],
-                format_dataset_id(handle),
             )
         except AttributeError as err:
             logger.warning("Kaggle dataset_list_files not available: %s", err)
             return None
+        files: List[Any] = []
+        page_token = None
+        seen_tokens = set()
+        while True:
+            response = (
+                method(format_dataset_id(handle))
+                if page_token is None
+                else method(
+                    format_dataset_id(handle),
+                    page_token=page_token,
+                    page_size=100,
+                )
+            )
+            files.extend(_response_files(response))
+            next_page_token = _response_next_page_token(response)
+            if not next_page_token or next_page_token in seen_tokens:
+                return files
+            seen_tokens.add(next_page_token)
+            page_token = next_page_token
 
     async def get_dataset_info(self, repo_id: str) -> Dict[str, Any]:
         handle = parse_dataset_handle(repo_id)
@@ -675,16 +915,7 @@ class AsyncKaggleService:
         raw = await self._call(self._dataset_list_files_sync, handle)
         if raw is None:
             return []
-        files = []
-        if hasattr(raw, "files"):
-            files = list(raw.files or [])
-        elif isinstance(raw, dict) and "datasetFiles" in raw:
-            files = list(raw.get("datasetFiles") or [])
-        elif isinstance(raw, dict) and "files" in raw:
-            files = list(raw.get("files") or [])
-        elif isinstance(raw, list):
-            files = raw
-        return [to_file_tree_item(f) for f in files]
+        return [to_file_tree_item(f) for f in _response_files(raw)]
 
     def _dataset_download_file_sync(self, handle, filename: str, target_dir: str) -> None:
         api = get_kaggle_client()
@@ -719,6 +950,7 @@ class AsyncKaggleService:
     ):
         handle = parse_dataset_handle(repo_id)
         tmp_dir = tempfile.mkdtemp(prefix="kaggle_dataset_")
+        cleanup_in_finally = True
         try:
             await self._call(
                 self._dataset_download_file_sync,
@@ -747,13 +979,20 @@ class AsyncKaggleService:
                     "repo_id": format_dataset_id(handle),
                 }
 
-            return FileResponse(
+            response = FileResponse(
                 source_path,
                 media_type="application/octet-stream",
                 filename=os.path.basename(source_path),
+                background=BackgroundTask(
+                    shutil.rmtree,
+                    tmp_dir,
+                    ignore_errors=True,
+                ),
             )
+            cleanup_in_finally = False
+            return response
         finally:
-            if download_dir:
+            if cleanup_in_finally:
                 shutil.rmtree(tmp_dir, ignore_errors=True)
 
     async def download_snapshot(
@@ -881,9 +1120,13 @@ class AsyncKaggleService:
 def _size_to_human(item: Any) -> str:
     raw = None
     if isinstance(item, dict):
-        raw = item.get("totalBytes") or item.get("size")
+        raw = item.get("totalBytes") or item.get("total_bytes") or item.get("size")
     else:
-        raw = getattr(item, "totalBytes", None) or getattr(item, "size", None)
+        raw = (
+            getattr(item, "totalBytes", None)
+            or getattr(item, "total_bytes", None)
+            or getattr(item, "size", None)
+        )
     if raw is None:
         return "Unknown"
     try:

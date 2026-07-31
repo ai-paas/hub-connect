@@ -1,4 +1,5 @@
 import os
+import sys
 import threading
 from typing import Optional
 
@@ -12,7 +13,14 @@ _kaggle_api_singleton = None
 
 
 def _require_credentials() -> None:
-    if not settings.KAGGLE_USERNAME or not settings.KAGGLE_KEY:
+    has_access_token = bool(settings.KAGGLE_API_TOKEN)
+    has_legacy_key = bool(settings.KAGGLE_USERNAME and settings.KAGGLE_KEY)
+    if has_access_token and sys.version_info < (3, 11) and not has_legacy_key:
+        raise HTTPException(
+            status_code=503,
+            detail="Kaggle API token authentication requires Python 3.11+",
+        )
+    if not has_access_token and not has_legacy_key:
         raise HTTPException(
             status_code=503,
             detail="Kaggle credentials not configured",
@@ -37,8 +45,14 @@ def get_kaggle_client():
         if _kaggle_api_singleton is not None:
             return _kaggle_api_singleton
 
-        os.environ["KAGGLE_USERNAME"] = settings.KAGGLE_USERNAME
-        os.environ["KAGGLE_KEY"] = settings.KAGGLE_KEY
+        use_access_token = bool(
+            settings.KAGGLE_API_TOKEN and sys.version_info >= (3, 11)
+        )
+        if use_access_token:
+            os.environ["KAGGLE_API_TOKEN"] = settings.KAGGLE_API_TOKEN
+        else:
+            os.environ["KAGGLE_USERNAME"] = settings.KAGGLE_USERNAME
+            os.environ["KAGGLE_KEY"] = settings.KAGGLE_KEY
 
         try:
             from kaggle.api.kaggle_api_extended import KaggleApi  # type: ignore
@@ -48,11 +62,17 @@ def get_kaggle_client():
                 status_code=503,
                 detail="Kaggle client library is not installed",
             ) from exc
+        except SystemExit as exc:
+            logger.error("Kaggle authentication failed during client import")
+            raise HTTPException(
+                status_code=503,
+                detail="Kaggle authentication failed",
+            ) from exc
 
         api = KaggleApi()
         try:
             api.authenticate()
-        except Exception as exc:  # pragma: no cover - network/auth edge
+        except (Exception, SystemExit) as exc:  # pragma: no cover - network/auth edge
             logger.error("Kaggle authentication failed: %s", exc)
             raise HTTPException(
                 status_code=503,
@@ -60,7 +80,7 @@ def get_kaggle_client():
             ) from exc
 
         _kaggle_api_singleton = api
-        logger.info("Kaggle API client authenticated as %s", settings.KAGGLE_USERNAME)
+        logger.info("Kaggle API client authenticated")
         return _kaggle_api_singleton
 
 

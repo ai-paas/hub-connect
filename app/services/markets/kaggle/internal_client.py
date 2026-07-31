@@ -1,20 +1,22 @@
 """Best-effort client for Kaggle's internal ``ModelService.ListModels`` endpoint.
 
 The public kaggle SDK (``ModelApiService.ListModels``) caps ``total_results`` at
-10000 and exposes no model-instance count. Kaggle's web UI instead calls the
+10000, exposes no model-instance count, and (as of 2026-07) its JSON no longer
+carries a per-model ``downloadCount``. Kaggle's web UI instead calls the
 *internal* ``models.ModelService/ListModels`` endpoint (``/api/i/...``), which
 returns the accurate ``totalResults`` (e.g. 546 organization models) and
-``totalModelInstances`` (e.g. 3499 variations) shown on kaggle.com/models.
+``totalModelInstances`` (e.g. 3499 variations) shown on kaggle.com/models, and
+per-model fields such as ``downloadCount`` via ``readMask``.
 
 This module replicates that call with a self-built, XSRF-warmed ``requests``
-session authenticated by the same ``(username, key)`` Basic credentials the SDK
-uses. It is intentionally fail-soft: every error path returns ``None`` so the
+session authenticated by the same access token or legacy ``(username, key)``
+credentials the SDK uses. It is intentionally fail-soft: every error path returns ``None`` so the
 caller can fall back to the public SDK total. This is an *undocumented* endpoint
 and may change without notice; treat it as a best-effort enhancement, not a
 contract.
 """
 import threading
-from typing import Dict, Optional
+from typing import Dict, Iterable, Optional
 
 import requests
 
@@ -49,7 +51,10 @@ def _build_session():
             "Accept": "application/json",
         }
     )
-    sess.auth = (settings.KAGGLE_USERNAME, settings.KAGGLE_KEY)
+    if settings.KAGGLE_API_TOKEN:
+        sess.headers["Authorization"] = f"Bearer {settings.KAGGLE_API_TOKEN}"
+    else:
+        sess.auth = (settings.KAGGLE_USERNAME, settings.KAGGLE_KEY)
     resp = sess.get(_WARM_URL, timeout=settings.KAGGLE_TIMEOUT)
     resp.raise_for_status()
     token = None
@@ -102,18 +107,16 @@ def _build_body(search: str, owner_type: str) -> dict:
     }
 
 
-def fetch_model_totals(
-    search: str = "", *, owner_type: str = DEFAULT_OWNER_TYPE
-) -> Optional[Dict[str, int]]:
-    """Return ``{'total_results', 'total_model_instances'}`` or ``None`` on failure.
+def _post_list_models(body: dict) -> Optional[dict]:
+    """POST to the internal ListModels endpoint; ``None`` on any failure.
 
-    Never raises — callers treat ``None`` as "use the public SDK total instead".
-    Retries once with a fresh session in case a cached XSRF token went stale
-    (which surfaces as 400/401/403).
+    Never raises. Retries once with a fresh session in case a cached XSRF
+    token went stale (which surfaces as 400/401/403).
     """
-    if not settings.KAGGLE_USERNAME or not settings.KAGGLE_KEY:
+    has_access_token = bool(settings.KAGGLE_API_TOKEN)
+    has_legacy_key = bool(settings.KAGGLE_USERNAME and settings.KAGGLE_KEY)
+    if not has_access_token and not has_legacy_key:
         return None
-    body = _build_body(search, owner_type)
     for attempt in (1, 2):
         try:
             sess, xsrf = _get_session(force=(attempt == 2))
@@ -126,18 +129,67 @@ def fetch_model_totals(
                 reset_internal_session()
                 continue
             resp.raise_for_status()
-            data = resp.json()
-            total_results = data.get("totalResults")
-            if total_results is None:
-                return None
-            return {
-                "total_results": int(total_results),
-                "total_model_instances": int(data.get("totalModelInstances") or 0),
-            }
+            return resp.json()
         except Exception as exc:  # network/parse/etc. — fail soft to the caller
-            logger.warning("Kaggle internal model totals failed (attempt %s): %s", attempt, exc)
+            logger.warning("Kaggle internal ListModels failed (attempt %s): %s", attempt, exc)
             if attempt == 1:
                 reset_internal_session()
                 continue
             return None
     return None
+
+
+def fetch_model_totals(
+    search: str = "", *, owner_type: str = DEFAULT_OWNER_TYPE
+) -> Optional[Dict[str, int]]:
+    """Return ``{'total_results', 'total_model_instances'}`` or ``None`` on failure.
+
+    Never raises — callers treat ``None`` as "use the public SDK total instead".
+    """
+    data = _post_list_models(_build_body(search, owner_type))
+    if data is None:
+        return None
+    total_results = data.get("totalResults")
+    if total_results is None:
+        return None
+    return {
+        "total_results": int(total_results),
+        "total_model_instances": int(data.get("totalModelInstances") or 0),
+    }
+
+
+def fetch_model_downloads(model_ids: Iterable) -> Optional[Dict[int, int]]:
+    """Return ``{model_id: downloadCount}`` for the given ids, or ``None`` on failure.
+
+    The public ListModels JSON stopped including per-model ``downloadCount``,
+    so callers pass the numeric ids from a public page and merge the counts
+    returned here. The ``filter.id`` lookup matches models of any owner type.
+    Never raises — ``None`` means "leave the mapped zeros as they are".
+    """
+    ids = []
+    for raw in model_ids or []:
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if value not in ids:
+            ids.append(value)
+    if not ids:
+        return None
+    body = _build_body("", "MODEL_OWNER_TYPE_UNSPECIFIED")
+    body["filter"]["id"] = ids
+    body["pageSize"] = len(ids)
+    body["readMask"] = "id,downloadCount"
+    data = _post_list_models(body)
+    if data is None:
+        return None
+    counts: Dict[int, int] = {}
+    for model in data.get("models") or []:
+        model_id = model.get("id")
+        if model_id is None:
+            continue
+        try:
+            counts[int(model_id)] = int(model.get("downloadCount") or 0)
+        except (TypeError, ValueError):
+            continue
+    return counts

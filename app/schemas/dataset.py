@@ -14,6 +14,10 @@ class Dataset(BaseModel):
     repoType: str
     datasetsServerInfo: Optional[Dict[str, Any]] = None
     isLikedByUser: Optional[bool] = None
+    # Added upstream in HF datasets-json (2026-07); optional so markets that
+    # don't provide them (and cached older payloads) still validate.
+    isBenchmark: Optional[bool] = None
+    isTraces: Optional[bool] = None
 
 class DatasetSearchResponse(BaseModel):
     datasets: List[Dataset]

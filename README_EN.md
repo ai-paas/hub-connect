@@ -62,7 +62,9 @@ Minimum values to review:
 HF_API_TOKEN=your_huggingface_token
 SECRET_KEY=change-this-to-at-least-32-characters
 
-# Kaggle (optional): leave blank to disable; market=kaggle returns 503 when unset
+# Kaggle (optional; API tokens require Python 3.11+): market=kaggle returns 503 when unset
+KAGGLE_API_TOKEN=
+# Set only when using legacy authentication
 KAGGLE_USERNAME=
 KAGGLE_KEY=
 

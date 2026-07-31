@@ -92,7 +92,7 @@ router = APIRouter(tags=["models"])
             "content": {"application/json": {"example": {"detail": "Internal server error"}}},
         },
         503: {
-            "description": "마켓 자격증명이 설정되지 않았습니다. Kaggle 사용 시 `KAGGLE_USERNAME`/`KAGGLE_KEY` 환경변수를 확인하세요.",
+            "description": "마켓 자격증명이 설정되지 않았습니다. Kaggle 사용 시 `KAGGLE_API_TOKEN` 또는 `KAGGLE_USERNAME`/`KAGGLE_KEY` 환경변수를 확인하세요.",
             "content": {"application/json": {"example": {"detail": "Kaggle credentials not configured"}}},
         },
     },
@@ -102,7 +102,7 @@ async def api_models(
     query: str = "",
     sort: str = "downloads",
     page: int = Query(1, ge=1),
-    limit: int = 30,
+    limit: int = Query(30, ge=1, le=100),
     num_parameters_min: Optional[str] = Query(None, description="Minimum parameters (e.g., '3B', '7B', '24B')"),
     num_parameters_max: Optional[str] = Query(None, description="Maximum parameters (e.g., '128B', '256B')"),
     include_parameters: bool = Query(True, description="Include parameter count in response"),
@@ -129,7 +129,8 @@ async def api_models(
                 license,
                 apps,
                 inference_provider,
-                other
+                other,
+                limit=limit,
             )
         else:
             data = await market_service.search_models(
@@ -353,6 +354,6 @@ async def api_model_detail(model_id: str, market: str = Query(..., description="
         return await market_service.get_model_detail(model_id)
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Error in api_model_detail: {str(e)}")
-        raise HTTPException(status_code=404, detail="Model not found")
+    except Exception:
+        logger.exception("Error in api_model_detail")
+        raise HTTPException(status_code=500, detail="Internal server error")
