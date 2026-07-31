@@ -21,6 +21,7 @@ from app.core.logging import logger, LoggingMiddleware
 from app.middleware.rate_limit import RateLimitMiddleware
 from app.services.async_service_manager import service_manager
 from app.services.background_cache import background_cache_service
+from app.services.markets.async_common import close_async_market_services
 from app.services.redis_service import redis_service
 
 
@@ -56,6 +57,9 @@ async def lifespan(app: FastAPI):
     # Stop background cache service
     await background_cache_service.stop()
     logger.info("Background cache service stopped")
+
+    await close_async_market_services()
+    logger.info("Market services closed")
     
     # Close Redis if it was initialized
     if redis_service.is_available:
@@ -269,10 +273,11 @@ async def health_check():
             "status": "available",
             "details": storage_status
         }
-    except Exception as e:
+    except Exception:
+        logger.exception("Storage health check failed")
         health_status["services"]["storage"] = {
             "status": "unavailable",
-            "error": str(e)
+            "error": "Health check failed"
         }
         health_status["status"] = "degraded"
     

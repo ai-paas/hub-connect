@@ -286,7 +286,7 @@ async def create_bucket(
         raise HTTPException(status_code=400, detail=f"Invalid bucket name: {str(e)}")
     except Exception as e:
         logger.error(f"Unexpected error creating bucket '{request.name}': {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Create bucket failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Create bucket failed")
 
 @buckets_router.get(
     "/{bucket_id}",
@@ -353,8 +353,9 @@ async def get_bucket(
         )
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Error getting bucket")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @buckets_router.delete(
     "/{bucket_id}",
@@ -408,8 +409,9 @@ async def delete_bucket(
         }
     except HTTPException as e:
         raise e
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Error deleting bucket")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 # ==============================================
 # FOLDER MANAGEMENT APIs
@@ -498,8 +500,9 @@ async def list_folder_contents(
     """List folder contents in tree structure"""
     try:
         return await storage_service.list_objects_as_tree(bucket_id, prefix, depth)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Error listing folder contents")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @buckets_router.post(
     "/{bucket_id}/folders",
@@ -551,8 +554,9 @@ async def create_folder(
         }
     except HTTPException as e:
         raise e
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Error creating folder")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @buckets_router.delete(
     "/{bucket_id}/folders/{folder_path:path}",
@@ -606,7 +610,7 @@ async def delete_folder(
         raise e
     except Exception as e:
         logger.error(f"Error deleting folder '{folder_path}': {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @buckets_router.put(
     "/{bucket_id}/folders/{folder_path:path}",
@@ -668,7 +672,7 @@ async def rename_folder(
         raise e
     except Exception as e:
         logger.error(f"Error renaming folder '{folder_path}': {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @buckets_router.post(
     "/{bucket_id}/folders/{folder_path:path}/copy",
@@ -730,7 +734,7 @@ async def copy_folder(
         raise e
     except Exception as e:
         logger.error(f"Error copying folder '{folder_path}': {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @buckets_router.get(
     "/{bucket_id}/folders/{folder_path:path}/stats",
@@ -788,7 +792,7 @@ async def get_folder_stats(
         raise e
     except Exception as e:
         logger.error(f"Error getting folder stats for '{folder_path}': {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 # ==============================================
 # OBJECT MANAGEMENT APIs
@@ -860,7 +864,7 @@ async def upload_object(
         raise e
     except Exception as e:
         logger.error(f"Error in upload_object: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @buckets_router.get(
     "/{bucket_id}/objects/{object_key:path}",
@@ -927,7 +931,7 @@ async def download_object(
         raise e
     except Exception as e:
         logger.error(f"Error in download_object: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @buckets_router.put(
     "/{bucket_id}/objects/{object_key:path}",
@@ -989,8 +993,9 @@ async def update_object(
             "new_key": request.new_key,
             "message": "Object renamed successfully"
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Error updating object")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @buckets_router.post(
     "/{bucket_id}/objects/{object_key:path}/copy",
@@ -1061,7 +1066,7 @@ async def copy_object(
         raise e
     except Exception as e:
         logger.error(f"Error copying object '{object_key}': {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @buckets_router.delete(
     "/{bucket_id}/objects/{object_key:path}",
@@ -1114,8 +1119,9 @@ async def delete_object(
             "object_key": object_key,
             "message": "Object deleted successfully"
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Error deleting object")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 # ==============================================
 # UPLOAD MANAGEMENT APIs
@@ -1186,8 +1192,9 @@ async def list_uploads(
                 for upload in uploads.values()
             ]
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Error listing uploads")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @uploads_router.get(
     "/{upload_id}",
@@ -1273,8 +1280,9 @@ async def get_upload_progress(
         }
     except HTTPException as e:
         raise e
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.exception("Error getting upload progress")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @uploads_router.delete(
     "/{upload_id}",
@@ -1351,4 +1359,4 @@ async def cancel_upload(
         raise e
     except Exception as e:
         logger.error(f"Error cancelling upload '{upload_id}': {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Internal server error")

@@ -62,7 +62,9 @@ cp .env.sample .env
 HF_API_TOKEN=your_huggingface_token
 SECRET_KEY=change-this-to-at-least-32-characters
 
-# Kaggle 연동(선택): 미설정시 market=kaggle 호출은 503 응답
+# Kaggle 연동(선택, API 토큰은 Python 3.11+): 미설정시 market=kaggle 호출은 503 응답
+KAGGLE_API_TOKEN=
+# 레거시 인증을 사용하는 경우에만 설정
 KAGGLE_USERNAME=
 KAGGLE_KEY=
 

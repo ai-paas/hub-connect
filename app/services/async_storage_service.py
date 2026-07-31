@@ -89,7 +89,7 @@ class AsyncStorageService:
             ]
         except Exception as e:
             logger.error(f"Error listing buckets: {str(e)}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Error listing buckets")
 
     async def get_bucket_details(self, bucket_name: str) -> Dict[str, Any]:
         """Get bucket details asynchronously"""
@@ -124,7 +124,7 @@ class AsyncStorageService:
             raise
         except Exception as e:
             logger.error(f"Error getting bucket details for {bucket_name}: {str(e)}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Error getting bucket details")
 
     async def list_objects_as_tree(self, bucket_name: str, prefix: str = "", depth: int = None) -> Dict[str, Any]:
         """Build object tree structure asynchronously"""
@@ -217,10 +217,10 @@ class AsyncStorageService:
 
         except ClientError as e:
             logger.error(f"Error listing objects: {str(e)}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Error listing objects")
         except Exception as e:
             logger.error(f"Unexpected error: {str(e)}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Error listing objects")
 
     async def upload_file(self, bucket_name: str, file: UploadFile, prefix: str = "") -> Dict[str, Any]:
         """Upload file asynchronously"""
@@ -260,7 +260,7 @@ class AsyncStorageService:
             logger.error(f"Error uploading file: {str(e)}")
             if isinstance(e, HTTPException):
                 raise e
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Error uploading file")
 
     async def _async_simple_upload(self, bucket_name: str, file: UploadFile, file_location: str, upload_id: str) -> str:
         """Simple async upload for small files"""
@@ -536,10 +536,10 @@ class AsyncStorageService:
 
         except ClientError as e:
             logger.error(f"Error downloading file: {str(e)}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Error downloading file")
         except Exception as e:
             logger.error(f"Unexpected error downloading file: {str(e)}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Error downloading file")
 
     async def stream_file(self, bucket_name: str, file_key: str, chunk_size: int = 1024 * 1024):
         """Stream file from S3 without loading entire file into memory.
@@ -588,12 +588,12 @@ class AsyncStorageService:
                     detail=f"File '{file_key}' not found in bucket '{bucket_name}'"
                 )
             logger.error(f"Error streaming file: {str(e)}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Error streaming file")
         except HTTPException:
             raise
         except Exception as e:
             logger.error(f"Unexpected error streaming file: {str(e)}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Error streaming file")
 
     async def delete_file(self, bucket_name: str, file_key: str) -> None:
         """Delete file asynchronously"""
@@ -620,7 +620,7 @@ class AsyncStorageService:
             )
         except ClientError as e:
             logger.error(f"Error creating folder '{folder_path}': {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Could not create folder: {str(e)}")
+            raise HTTPException(status_code=500, detail="Could not create folder")
 
     async def delete_folder(self, bucket_name: str, folder_path: str) -> None:
         """Delete a folder and all its contents recursively."""
@@ -654,7 +654,7 @@ class AsyncStorageService:
             
         except ClientError as e:
             logger.error(f"Error deleting folder '{folder_path}': {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Could not delete folder: {str(e)}")
+            raise HTTPException(status_code=500, detail="Could not delete folder")
 
     async def rename_folder(self, bucket_name: str, old_path: str, new_path: str) -> None:
         """Rename a folder by copying all objects to new prefix and deleting old ones."""
@@ -708,7 +708,7 @@ class AsyncStorageService:
 
         except ClientError as e:
             logger.error(f"Error renaming folder '{old_path}' to '{new_path}': {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Could not rename folder: {str(e)}")
+            raise HTTPException(status_code=500, detail="Could not rename folder")
 
     async def copy_folder(self, bucket_name: str, source_path: str, dest_path: str) -> None:
         """Copy a folder and all its contents to a new location."""
@@ -751,7 +751,7 @@ class AsyncStorageService:
 
         except ClientError as e:
             logger.error(f"Error copying folder '{source_path}' to '{dest_path}': {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Could not copy folder: {str(e)}")
+            raise HTTPException(status_code=500, detail="Could not copy folder")
 
     async def get_folder_stats(self, bucket_name: str, folder_path: str) -> Dict[str, Any]:
         """Get statistics for a folder."""
@@ -784,7 +784,7 @@ class AsyncStorageService:
             
         except ClientError as e:
             logger.error(f"Error getting folder stats for '{folder_path}': {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Could not get folder stats: {str(e)}")
+            raise HTTPException(status_code=500, detail="Could not get folder stats")
 
     async def rename_file(self, bucket_name: str, old_key: str, new_key: str) -> None:
         """Rename a file by copying to new key and deleting old one."""
@@ -822,7 +822,7 @@ class AsyncStorageService:
             
         except ClientError as e:
             logger.error(f"Error copying file '{source_key}' to '{dest_key}': {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Could not copy file: {str(e)}")
+            raise HTTPException(status_code=500, detail="Could not copy file")
 
     async def create_bucket(self, bucket_name: str) -> bool:
         """Create bucket asynchronously"""
@@ -845,7 +845,7 @@ class AsyncStorageService:
             except ClientError as e:
                 if e.response['Error']['Code'] != '404':
                     logger.error(f"Error checking bucket existence: {str(e)}")
-                    raise HTTPException(status_code=500, detail=f"Error checking bucket: {str(e)}")
+                    raise HTTPException(status_code=500, detail="Error checking bucket")
             
             # Create bucket
             logger.info(f"Creating bucket: {bucket_name}")
@@ -855,7 +855,7 @@ class AsyncStorageService:
             raise
         except Exception as e:
             logger.error(f"Unexpected error creating bucket: {str(e)}")
-            raise HTTPException(status_code=500, detail=str(e))
+            raise HTTPException(status_code=500, detail="Error creating bucket")
 
     async def delete_bucket(self, bucket_name: str) -> bool:
         """Delete bucket asynchronously"""
@@ -904,7 +904,7 @@ class AsyncStorageService:
                     )
                 else:
                     logger.error(f"Error listing/deleting objects in bucket {bucket_name}: {str(e)}")
-                    raise HTTPException(status_code=500, detail=f"Error deleting objects: {str(e)}")
+                    raise HTTPException(status_code=500, detail="Error deleting objects")
 
             # Delete bucket
             logger.info(f"Deleting empty bucket {bucket_name}")
@@ -928,10 +928,10 @@ class AsyncStorageService:
                     detail=f"Bucket '{bucket_name}' is not empty. Please try again."
                 )
             else:
-                raise HTTPException(status_code=500, detail=f"S3 Error: {str(e)}")
+                raise HTTPException(status_code=500, detail="S3 error")
         except Exception as e:
             logger.error(f"Unexpected error deleting bucket {bucket_name}: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+            raise HTTPException(status_code=500, detail="Unexpected storage error")
 
 # Global async storage service instance
 async_storage_service = AsyncStorageService()

@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     ALLOWED_ORIGINS: List[str] = ["*"]
     CACHE_TIMEOUT: int = 3600
     CACHE_REFRESH_INTERVAL: int = 3600  # Background cache refresh interval (seconds)
-    GROUPS: List[str] = ["region", "other", "library", "license", "language", "dataset", "pipeline_tag"]
+    GROUPS: List[str] = ["region", "other", "library", "license", "language", "dataset", "pipeline_tag", "deploy"]
     LIMITED_GROUPS: List[str] = ["language", "dataset"]
     LIMIT: int = 100
 
@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     DATASET_DOWNLOAD_DIR: Optional[str] = None  # Custom download directory
 
     # Kaggle marketplace settings
+    KAGGLE_API_TOKEN: Optional[str] = None
     KAGGLE_USERNAME: Optional[str] = None
     KAGGLE_KEY: Optional[str] = None
     KAGGLE_TIMEOUT: int = 30

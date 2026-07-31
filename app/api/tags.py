@@ -16,7 +16,8 @@ INTERNAL_SERVER_ERROR_MESSAGE = "Internal Server Error"
     description=(
         "선택한 마켓의 전체 태그 그룹 데이터를 조회합니다.\n\n"
         "Kaggle은 HF 같은 통합 태그 체계가 없어 **부분 응답**을 반환합니다:\n"
-        "`library`(framework 상수)와 `dataset`(`datasets_list_tags`)만 채워지고 나머지 그룹은 빈 배열입니다.\n\n"
+        "`library`(framework 상수)만 채워지고 나머지 그룹은 빈 배열입니다.\n"
+        "(`dataset` 그룹은 SDK가 `datasets_list_tags`를 제공할 때만 채워지며, kaggle 2.2.x에는 해당 메서드가 없습니다.)\n\n"
         "### 입력 필드\n"
         "| 필드 | 위치 | 필수 | 설명 | 예시 |\n"
         "| --- | --- | --- | --- | --- |\n"
@@ -30,7 +31,8 @@ INTERNAL_SERVER_ERROR_MESSAGE = "Internal Server Error"
         "| license | 라이선스 태그 목록입니다. Kaggle은 `[]`. |\n"
         "| language | 언어 태그 목록입니다. Kaggle은 `[]`. |\n"
         "| dataset | 데이터셋 관련 태그 목록입니다. |\n"
-        "| pipeline_tag | 파이프라인 태그 목록입니다. Kaggle은 `[]`. |"
+        "| pipeline_tag | 파이프라인 태그 목록입니다. Kaggle은 `[]`. |\n"
+        "| deploy | 배포/추론 환경 태그 목록입니다. Kaggle은 `[]`. |"
     ),
     responses={
         200: {
@@ -142,7 +144,7 @@ async def api_tags(
 async def api_tags_group(
     group: str = Path(
         ..., 
-        description="Tag group name (region, other, library, license, language, dataset, pipeline_tag)",
+        description="Tag group name (region, other, library, license, language, dataset, pipeline_tag, deploy)",
         examples=["library"]
     ), 
     market: str = Query(
@@ -225,7 +227,7 @@ async def api_tags_group(
 async def api_tags_group_all(
     group: str = Path(
         ..., 
-        description="Tag group name (region, other, library, license, language, dataset, pipeline_tag)",
+        description="Tag group name (region, other, library, license, language, dataset, pipeline_tag, deploy)",
         examples=["language"]
     ), 
     market: str = Query(

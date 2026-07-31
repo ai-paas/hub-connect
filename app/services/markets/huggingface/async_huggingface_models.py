@@ -6,6 +6,7 @@ from typing import Dict, Any, List, Optional
 
 import httpx
 import markdown2
+from fastapi import HTTPException
 from fastapi.responses import FileResponse
 from huggingface_hub import HfApi, ModelCard, hf_hub_download, snapshot_download, HfFileSystem
 from huggingface_hub.utils import HfHubHTTPError
@@ -25,6 +26,15 @@ HF_API_TIMEOUT = 60    # 60 seconds for HuggingFace API calls
 FILE_DOWNLOAD_TIMEOUT = 300  # 5 minutes for file downloads
 
 HUGGINGFACE_MODELS_JSON_URL = "https://huggingface.co/models-json"
+
+
+def _safe_download_target(download_dir: str, filename: str) -> str:
+    target_dir = os.path.abspath(os.path.expanduser(download_dir))
+    target_path = os.path.abspath(os.path.join(target_dir, filename))
+    if os.path.commonpath([target_dir, target_path]) != target_dir:
+        raise HTTPException(status_code=400, detail="Invalid download filename")
+    os.makedirs(os.path.dirname(target_path), exist_ok=True)
+    return target_path
 
 class AsyncHuggingFaceService:
     def __init__(self):
@@ -66,93 +76,25 @@ class AsyncHuggingFaceService:
         license: Optional[str] = None,
         apps: Optional[List[str]] = None,
         inference_provider: Optional[List[str]] = None,
-        other: Optional[List[str]] = None
+        other: Optional[List[str]] = None,
+        limit: int = 30,
     ) -> Dict[str, Any]:
-        """Get trending models using fully async HTTP client with parameter filtering"""
-        params = {
-            "sort": "trending",
-            "p": page - 1 if page > 1 else None,
-            "withCount": True
-        }
-        if query:
-            params["search"] = query
-
-        # Add parameter filter if specified
-        param_filter = build_huggingface_parameter_filter(num_parameters_min, num_parameters_max)
-        if param_filter:
-            params["num_parameters"] = param_filter
-
-        # Add tag/attribute filters
-        if pipeline_tag:
-            params["pipeline_tag"] = pipeline_tag
-
-        # Multi-select filters (join with comma)
-        if library:
-            params["library"] = ",".join(library)
-
-        if language:
-            params["language"] = ",".join(language)
-
-        if license:
-            params["license"] = license
-
-        if apps:
-            params["apps"] = ",".join(apps)
-
-        if inference_provider:
-            params["inference_provider"] = ",".join(inference_provider)
-
-        if other:
-            params["other"] = ",".join(other)
-
-        try:
-            log_external_api_call(HUGGINGFACE_MODELS_JSON_URL, "GET", params=params)
-
-            async with self.get_http_client() as client:
-                response = await client.get(HUGGINGFACE_MODELS_JSON_URL, params=params)
-                response.raise_for_status()
-                data = response.json()
-
-            models = [model for model in data['models'] if model['repoType'] == 'model']
-
-            # Enhance models with parameter display information
-            for model in models:
-                if 'numParameters' in model and model['numParameters']:
-                    model['parameterDisplay'] = format_parameter_display(model['numParameters'])
-                    model['parameterRange'] = categorize_parameter_range(model['numParameters'])
-
-            result = {"models": models, "total": data['numTotalItems']}
-
-            # Include applied filters in response
-            applied_filters = {}
-            if param_filter:
-                if num_parameters_min:
-                    applied_filters['num_parameters_min'] = num_parameters_min
-                if num_parameters_max:
-                    applied_filters['num_parameters_max'] = num_parameters_max
-
-            if pipeline_tag:
-                applied_filters['pipeline_tag'] = pipeline_tag
-            if library:
-                applied_filters['library'] = library
-            if language:
-                applied_filters['language'] = language
-            if license:
-                applied_filters['license'] = license
-            if apps:
-                applied_filters['apps'] = apps
-            if inference_provider:
-                applied_filters['inference_provider'] = inference_provider
-            if other:
-                applied_filters['other'] = other
-
-            if applied_filters:
-                result['applied_filters'] = applied_filters
-
-            return result
-        except httpx.HTTPStatusError as e:
-            logger.error(f"Error in get_trending_models: {str(e)}")
-            raise
+        """Get trending models with the same pagination contract as search."""
+        return await self.search_models(
+            query=query or "",
+            sort="trending",
+            page=page,
+            limit=limit,
+            num_parameters_min=num_parameters_min,
+            num_parameters_max=num_parameters_max,
+            pipeline_tag=pipeline_tag,
+            library=library,
+            language=language,
+            license=license,
+            apps=apps,
+            inference_provider=inference_provider,
+            other=other,
+        )
 
     async def search_models(
         self,
@@ -180,11 +122,6 @@ class AsyncHuggingFaceService:
         if query:
             params["search"] = query
 
-        # Add pagination (models-json uses p parameter, 0-indexed)
-        # Note: models-json returns 30 items per page by default
-        if page > 1:
-            params["p"] = page - 1
-
         # Add parameter filter if specified
         param_filter = build_huggingface_parameter_filter(num_parameters_min, num_parameters_max)
         if param_filter:
@@ -216,13 +153,37 @@ class AsyncHuggingFaceService:
         try:
             log_external_api_call(HUGGINGFACE_MODELS_JSON_URL, "GET", params=params)
 
+            effective_page = max(1, page)
+            effective_limit = max(1, min(limit, 100))
+            upstream_page_size = 30
+            start = (effective_page - 1) * effective_limit
+            end = start + effective_limit
+            first_upstream_page = start // upstream_page_size
+            last_upstream_page = (end - 1) // upstream_page_size
+            upstream_models = []
+            total = 0
+
             async with self.get_http_client() as client:
-                response = await client.get(HUGGINGFACE_MODELS_JSON_URL, params=params)
-                response.raise_for_status()
-                data = response.json()
+                for upstream_page in range(first_upstream_page, last_upstream_page + 1):
+                    page_params = dict(params)
+                    if upstream_page:
+                        page_params["p"] = upstream_page
+                    response = await client.get(
+                        HUGGINGFACE_MODELS_JSON_URL,
+                        params=page_params,
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+                    total = int(data.get("numTotalItems", total) or 0)
+                    upstream_models.extend(data.get("models", []))
 
             # Filter only models (exclude spaces)
-            models = [model for model in data['models'] if model['repoType'] == 'model']
+            offset = start - first_upstream_page * upstream_page_size
+            models = [
+                model
+                for model in upstream_models[offset:offset + effective_limit]
+                if model.get("repoType") == "model"
+            ]
 
             # Enhance models with parameter display information
             for model in models:
@@ -230,7 +191,7 @@ class AsyncHuggingFaceService:
                     model['parameterDisplay'] = format_parameter_display(model['numParameters'])
                     model['parameterRange'] = categorize_parameter_range(model['numParameters'])
 
-            result = {"models": models, "total": data['numTotalItems']}
+            result = {"models": models, "total": total}
 
             # Include applied filters in response
             applied_filters = {}
@@ -260,19 +221,28 @@ class AsyncHuggingFaceService:
 
             return result
         except httpx.HTTPStatusError as e:
-            logger.error(f"Error in search_models: {str(e)}")
-            raise
+            logger.warning("Hugging Face model search failed: %s", e)
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail="Error searching models",
+            ) from e
 
     async def _async_hf_api_call(self, func, *args, **kwargs):
         """Wrapper for HuggingFace API calls with timeout and thread pool"""
-        loop = asyncio.get_event_loop()
-        return await asyncio.wait_for(
-            loop.run_in_executor(
-                None,
-                functools.partial(func, *args, **kwargs)
-            ),
-            timeout=HF_API_TIMEOUT
-        )
+        loop = asyncio.get_running_loop()
+        try:
+            return await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    functools.partial(func, *args, **kwargs)
+                ),
+                timeout=HF_API_TIMEOUT
+            )
+        except asyncio.TimeoutError as exc:
+            raise HTTPException(
+                status_code=504,
+                detail="Hugging Face request timed out",
+            ) from exc
 
     async def get_model_files(self, model_id: str) -> Dict[str, Any]:
         """Get model files with async HuggingFace API calls"""
@@ -296,9 +266,20 @@ class AsyncHuggingFaceService:
             ]
 
             return {"files": files_info}
-        except Exception as e:
-            logger.error(f"Error in get_model_files: {str(e)}")
+        except HfHubHTTPError as e:
+            status = e.response.status_code if e.response is not None else 502
+            if status == 404:
+                raise HTTPException(status_code=404, detail=f"Model not found: {model_id}")
+            logger.warning("Hugging Face model file listing failed: %s", e)
+            raise HTTPException(
+                status_code=status,
+                detail="Error getting model files",
+            ) from e
+        except HTTPException:
             raise
+        except Exception:
+            logger.exception("Hugging Face model file listing failed")
+            raise HTTPException(status_code=502, detail="Error getting model files")
 
     async def download_model_file(self, model_id: str, filename: str, download_dir: Optional[str] = None):
         """Download model file with optional custom path"""
@@ -315,9 +296,7 @@ class AsyncHuggingFaceService:
             
             # If custom download directory specified, copy file there and return path info
             if download_dir:
-                target_dir = os.path.expanduser(download_dir)  # Support ~ expansion
-                os.makedirs(target_dir, exist_ok=True)
-                target_path = os.path.join(target_dir, filename)
+                target_path = _safe_download_target(download_dir, filename)
                 await asyncio.to_thread(shutil.copy2, cached_path, target_path)
                 
                 # Return JSON with custom path info
@@ -332,9 +311,23 @@ class AsyncHuggingFaceService:
             # Default: Return FileResponse for direct download
             file_name = os.path.basename(cached_path)
             return FileResponse(cached_path, media_type='application/octet-stream', filename=file_name)
-        except Exception as e:
-            logger.error(f"Error in download_model_file: {str(e)}")
+        except HfHubHTTPError as e:
+            status = e.response.status_code if e.response is not None else 502
+            if status == 404:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"File not found in model: {filename}",
+                )
+            logger.warning("Hugging Face model file download failed: %s", e)
+            raise HTTPException(
+                status_code=status,
+                detail="Error downloading model file",
+            ) from e
+        except HTTPException:
             raise
+        except Exception:
+            logger.exception("Hugging Face model file download failed")
+            raise HTTPException(status_code=502, detail="Error downloading model file")
 
     async def get_model_detail(self, model_id: str) -> Dict[str, Any]:
         """Get model details with concurrent async API calls"""
@@ -361,6 +354,27 @@ class AsyncHuggingFaceService:
             )
             
             model_info, model_card_result = results
+
+            if isinstance(model_info, Exception) and isinstance(
+                model_card_result,
+                Exception,
+            ):
+                error = model_info
+                if isinstance(error, HTTPException):
+                    raise error
+                if isinstance(error, HfHubHTTPError):
+                    status = (
+                        error.response.status_code
+                        if error.response is not None
+                        else 502
+                    )
+                    if status == 404:
+                        raise HTTPException(
+                            status_code=404,
+                            detail=f"Model not found: {model_id}",
+                        )
+                logger.warning("Hugging Face model detail failed: %s", error)
+                raise HTTPException(status_code=502, detail="Error getting model detail")
             
             # Handle exceptions
             if isinstance(model_info, Exception):
@@ -387,9 +401,11 @@ class AsyncHuggingFaceService:
             }
 
             return combined_info
-        except Exception as e:
-            logger.error(f"Error in get_model_detail: {str(e)}")
+        except HTTPException:
             raise
+        except Exception:
+            logger.exception("Hugging Face model detail failed")
+            raise HTTPException(status_code=502, detail="Error getting model detail")
 
     async def get_tags(self) -> Dict[str, Any]:
         """Get HuggingFace tags using async implementation"""
@@ -407,27 +423,46 @@ class AsyncHuggingFaceService:
             if query:
                 params["search"] = query
             url = "https://huggingface.co/datasets-json"
+            effective_page = max(1, page)
+            effective_page_size = max(1, min(page_size, 100))
+            upstream_page_size = 30
+            start = (effective_page - 1) * effective_page_size
+            end = start + effective_page_size
+            first_upstream_page = start // upstream_page_size
+            last_upstream_page = (end - 1) // upstream_page_size
+            datasets = []
+            total = 0
             async with self.get_http_client() as http_client:
-                response = await http_client.get(url, params=params, timeout=REQUESTS_TIMEOUT)
-                response.raise_for_status()
-                data = response.json()
+                for upstream_page in range(first_upstream_page, last_upstream_page + 1):
+                    page_params = dict(params)
+                    if upstream_page:
+                        page_params["p"] = upstream_page
+                    response = await http_client.get(
+                        url,
+                        params=page_params,
+                        timeout=REQUESTS_TIMEOUT,
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+                    total = int(data.get("numTotalItems", total) or 0)
+                    datasets.extend(data.get("datasets", []))
 
-                datasets = data.get("datasets", [])
-                start = (page - 1) * page_size
-                end = start + page_size
-                paginated_datasets = datasets[start:end]
-
-                return {
-                    "datasets": paginated_datasets,
-                    "total": len(datasets),
-                    "page": page,
-                    "page_size": page_size,
-                    "has_more": end < len(datasets),
-                    "total_is_exact": True,
-                }
+            offset = start - first_upstream_page * upstream_page_size
+            paginated_datasets = datasets[offset:offset + effective_page_size]
+            return {
+                "datasets": paginated_datasets,
+                "total": total,
+                "page": effective_page,
+                "page_size": effective_page_size,
+                "has_more": start + len(paginated_datasets) < total,
+                "total_is_exact": True,
+            }
         except httpx.HTTPStatusError as e:
-            logger.error(f"Error searching datasets: {e}")
-            raise Exception(f"Error searching for datasets: {e}")
+            logger.warning("Hugging Face dataset search failed: %s", e)
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail="Error searching datasets",
+            ) from e
 
     async def get_dataset_info(self, repo_id: str):
         """Get dataset info from datasets-server API"""
@@ -439,9 +474,12 @@ class AsyncHuggingFaceService:
                 return response.json()
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
-                raise Exception(f"Dataset not found: {repo_id}")
-            logger.error(f"Error getting dataset info: {e}")
-            raise Exception(f"Error getting dataset info: {e}")
+                raise HTTPException(status_code=404, detail=f"Dataset not found: {repo_id}")
+            logger.warning("Hugging Face dataset info failed: %s", e)
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail="Error getting dataset info",
+            ) from e
 
     async def get_dataset_files(self, repo_id: str):
         """Get dataset file tree"""
@@ -468,9 +506,12 @@ class AsyncHuggingFaceService:
                 return result
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
-                raise Exception(f"Dataset not found: {repo_id}")
-            logger.error(f"Error getting dataset files: {e}")
-            raise Exception(f"Error getting dataset file tree: {e}")
+                raise HTTPException(status_code=404, detail=f"Dataset not found: {repo_id}")
+            logger.warning("Hugging Face dataset file tree failed: %s", e)
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail="Error getting dataset file tree",
+            ) from e
 
     async def download_file(self, repo_id: str, filename: str, revision: Optional[str] = None, download_dir: Optional[str] = None):
         """Download dataset file with optional custom path"""
@@ -499,9 +540,7 @@ class AsyncHuggingFaceService:
             
             # If custom download directory specified, copy file there and return path info
             if download_dir:
-                target_dir = os.path.expanduser(download_dir)  # Support ~ expansion
-                os.makedirs(target_dir, exist_ok=True)
-                target_path = os.path.join(target_dir, filename)
+                target_path = _safe_download_target(download_dir, filename)
                 await asyncio.to_thread(shutil.copy2, cached_path, target_path)
                 
                 # Return JSON with custom path info
@@ -518,9 +557,15 @@ class AsyncHuggingFaceService:
             return FileResponse(cached_path, media_type='application/octet-stream', filename=file_name)
         except HfHubHTTPError as e:
             if e.response.status_code == 404:
-                raise Exception(f"File not found in dataset: {filename}")
-            logger.error(f"Error downloading dataset file: {e}")
-            raise Exception(f"Error downloading file: {e}")
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"File not found in dataset: {filename}",
+                )
+            logger.warning("Hugging Face dataset file download failed: %s", e)
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail="Error downloading file",
+            ) from e
 
     async def download_snapshot(self, repo_id: str, revision: Optional[str] = None, allow_patterns: Optional[List[str]] = None, ignore_patterns: Optional[List[str]] = None, download_dir: Optional[str] = None):
         """Download dataset snapshot with optional custom path"""
@@ -591,9 +636,12 @@ class AsyncHuggingFaceService:
             }
         except HfHubHTTPError as e:
             if e.response.status_code == 404:
-                raise Exception(f"Dataset not found: {repo_id}")
-            logger.error(f"Error downloading dataset snapshot: {e}")
-            raise Exception(f"Error downloading snapshot: {e}")
+                raise HTTPException(status_code=404, detail=f"Dataset not found: {repo_id}")
+            logger.warning("Hugging Face dataset snapshot download failed: %s", e)
+            raise HTTPException(
+                status_code=e.response.status_code,
+                detail="Error downloading snapshot",
+            ) from e
 
 # Global async service instance
 async_huggingface_service = AsyncHuggingFaceService()

@@ -93,7 +93,7 @@ class DatasetSort(str, Enum):
                     "content": {"application/json": {"example": {"detail": "Error searching datasets"}}},
                 },
                 503: {
-                    "description": "마켓 자격증명이 설정되지 않았습니다. Kaggle 사용 시 `KAGGLE_USERNAME`/`KAGGLE_KEY`를 확인하세요.",
+                    "description": "마켓 자격증명이 설정되지 않았습니다. Kaggle 사용 시 `KAGGLE_API_TOKEN` 또는 `KAGGLE_USERNAME`/`KAGGLE_KEY`를 확인하세요.",
                     "content": {"application/json": {"example": {"detail": "Kaggle credentials not configured"}}},
                 },
             })
@@ -101,8 +101,8 @@ async def search_datasets(
         market: str = Query(..., description="Market name (e.g., huggingface, kaggle)"),
         query: str = Query("", description="Search keyword"),
         sort: DatasetSort = Query(DatasetSort.likes, description="Sort order for datasets"),
-        page: int = Query(1, description="Page number for pagination"),
-        limit: int = Query(10, description="Number of results per page"),
+        page: int = Query(1, ge=1, description="Page number for pagination"),
+        limit: int = Query(10, ge=1, le=100, description="Number of results per page"),
         current_user: dict = Depends(get_current_user)
 ):
     try:
@@ -184,9 +184,9 @@ async def get_dataset_info(
         return await market_service.get_dataset_info(repo_id=repo_id)
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Error getting dataset info: {str(e)}")
-        raise HTTPException(status_code=404, detail="Dataset not found")
+    except Exception:
+        logger.exception("Error getting dataset info")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get("/{repo_id:path}/files",

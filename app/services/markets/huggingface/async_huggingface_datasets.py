@@ -10,6 +10,7 @@ from huggingface_hub import hf_hub_download, snapshot_download, HfFileSystem, Hf
 from huggingface_hub.utils import HfHubHTTPError
 
 from app.core.config import settings
+from app.core.logging import logger
 
 
 class HuggingFaceDatasetService:
@@ -27,25 +28,39 @@ class HuggingFaceDatasetService:
             if query:
                 params["search"] = query
             url = "https://huggingface.co/datasets-json"
-            response = await self.http_client.get(url, params=params)
-            response.raise_for_status()
-            data = response.json()
+            effective_page = max(1, page)
+            effective_page_size = max(1, min(page_size, 100))
+            upstream_page_size = 30
+            start = (effective_page - 1) * effective_page_size
+            end = start + effective_page_size
+            first_upstream_page = start // upstream_page_size
+            last_upstream_page = (end - 1) // upstream_page_size
+            datasets = []
+            total = 0
+            for upstream_page in range(first_upstream_page, last_upstream_page + 1):
+                page_params = dict(params)
+                if upstream_page:
+                    page_params["p"] = upstream_page
+                response = await self.http_client.get(url, params=page_params)
+                response.raise_for_status()
+                data = response.json()
+                total = int(data.get("numTotalItems", total) or 0)
+                datasets.extend(data.get("datasets", []))
 
-            datasets = data.get("datasets", [])
-            start = (page - 1) * page_size
-            end = start + page_size
-            paginated_datasets = datasets[start:end]
+            offset = start - first_upstream_page * upstream_page_size
+            paginated_datasets = datasets[offset:offset + effective_page_size]
 
             return {
                 "datasets": paginated_datasets,
-                "total": len(datasets),
-                "page": page,
-                "page_size": page_size,
-                "has_more": end < len(datasets),
+                "total": total,
+                "page": effective_page,
+                "page_size": effective_page_size,
+                "has_more": start + len(paginated_datasets) < total,
                 "total_is_exact": True,
             }
         except httpx.HTTPStatusError as e:
-            raise HTTPException(status_code=e.response.status_code, detail=f"Error searching for datasets: {e}")
+            logger.warning("Hugging Face dataset search failed: %s", e)
+            raise HTTPException(status_code=e.response.status_code, detail="Error searching for datasets")
 
     @cached(ttl=3600)
     async def get_dataset_card(self, repo_id: str, revision: str = "main"):
@@ -82,7 +97,8 @@ class HuggingFaceDatasetService:
         except HfHubHTTPError as e:
             if e.response.status_code == 404:
                 return None # README.md not found, which is fine
-            raise HTTPException(status_code=e.response.status_code, detail=f"Error getting dataset card: {e}")
+            logger.warning("Hugging Face dataset card failed: %s", e)
+            raise HTTPException(status_code=e.response.status_code, detail="Error getting dataset card")
         except Exception:
             return None
 
@@ -100,7 +116,8 @@ class HuggingFaceDatasetService:
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
                 raise HTTPException(status_code=404, detail=f"Dataset not found: {repo_id}")
-            raise HTTPException(status_code=e.response.status_code, detail=f"Error getting dataset info: {e}")
+            logger.warning("Hugging Face dataset info failed: %s", e)
+            raise HTTPException(status_code=e.response.status_code, detail="Error getting dataset info")
 
     @cached(ttl=3600)
     async def get_dataset_files(self, repo_id: str):
@@ -127,9 +144,11 @@ class HuggingFaceDatasetService:
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
                 raise HTTPException(status_code=404, detail=f"Dataset not found: {repo_id}")
-            raise HTTPException(status_code=e.response.status_code, detail=f"Error getting dataset file tree: {e}")
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            logger.warning("Hugging Face dataset file tree failed: %s", e)
+            raise HTTPException(status_code=e.response.status_code, detail="Error getting dataset file tree")
+        except Exception:
+            logger.exception("Hugging Face dataset file tree failed")
+            raise HTTPException(status_code=500, detail="Error getting dataset file tree")
 
     async def download_file(self, repo_id: str, filename: str, revision: Optional[str] = None, download_dir: Optional[str] = None):
         import os
@@ -178,9 +197,11 @@ class HuggingFaceDatasetService:
         except HfHubHTTPError as e:
             if e.response.status_code == 404:
                 raise HTTPException(status_code=404, detail=f"File not found in dataset: {filename}")
-            raise HTTPException(status_code=e.response.status_code, detail=f"Error downloading file: {e}")
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            logger.warning("Hugging Face dataset file download failed: %s", e)
+            raise HTTPException(status_code=e.response.status_code, detail="Error downloading file")
+        except Exception:
+            logger.exception("Hugging Face dataset file download failed")
+            raise HTTPException(status_code=500, detail="Error downloading file")
 
     async def download_snapshot(self, repo_id: str, revision: Optional[str] = None, allow_patterns: Optional[List[str]] = None, ignore_patterns: Optional[List[str]] = None, download_dir: Optional[str] = None):
         import os
@@ -253,6 +274,8 @@ class HuggingFaceDatasetService:
         except HfHubHTTPError as e:
             if e.response.status_code == 404:
                 raise HTTPException(status_code=404, detail=f"Dataset not found: {repo_id}")
-            raise HTTPException(status_code=e.response.status_code, detail=f"Error downloading snapshot: {e}")
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            logger.warning("Hugging Face dataset snapshot download failed: %s", e)
+            raise HTTPException(status_code=e.response.status_code, detail="Error downloading snapshot")
+        except Exception:
+            logger.exception("Hugging Face dataset snapshot download failed")
+            raise HTTPException(status_code=500, detail="Error downloading snapshot")
