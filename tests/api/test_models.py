@@ -299,6 +299,62 @@ async def test_kaggle_model_pagination_uses_next_page_token():
     assert result["models"][0]["id"] == "owner/model-2/pyTorch/v1"
 
 
+@pytest.mark.asyncio
+async def test_kaggle_model_files_request_pins_latest_instance_version():
+    requests = []
+
+    def list_files(request):
+        requests.append((request.version_number, request.page_token))
+        if request.page_token:
+            return SimpleNamespace(
+                files=[SimpleNamespace(name="group1-shard1of1.bin", size=2048)],
+                next_page_token="",
+            )
+        return SimpleNamespace(
+            files=[SimpleNamespace(name="model.json", size=512)],
+            next_page_token="next-page",
+        )
+
+    class ClientContext:
+        def __enter__(self):
+            return SimpleNamespace(
+                models=SimpleNamespace(
+                    model_api_client=SimpleNamespace(
+                        list_model_instance_version_files=list_files
+                    )
+                )
+            )
+
+        def __exit__(self, *exc):
+            return False
+
+    api = SimpleNamespace(
+        build_kaggle_client=lambda: ClientContext(),
+        model_instance_get=MagicMock(
+            return_value=SimpleNamespace(version_number=3)
+        ),
+        lookup_enum=lambda _enum, sample, _name: sample,
+        model_instance_files=MagicMock(side_effect=AssertionError("unversioned")),
+    )
+    kaggle_client_module.reset_kaggle_client_for_testing(api)
+    try:
+        result = await AsyncKaggleService().get_model_files(
+            "tensorflow/blazeface/tfJs/default"
+        )
+    finally:
+        kaggle_client_module.reset_kaggle_client_for_testing(None)
+
+    api.model_instance_get.assert_called_once_with(
+        "tensorflow/blazeface/tfJs/default"
+    )
+    assert requests == [(3, ""), (3, "next-page")]
+    assert [item["name"] for item in result["files"]] == [
+        "model.json",
+        "group1-shard1of1.bin",
+    ]
+    assert all(item["size"] != "Unknown" for item in result["files"])
+
+
 def test_kaggle_sdk_internal_type_error_is_not_treated_as_legacy_signature():
     class Api:
         @staticmethod

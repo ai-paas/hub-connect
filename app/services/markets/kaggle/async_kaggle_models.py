@@ -538,8 +538,67 @@ class AsyncKaggleService:
 
         return {"model": model_level, "instance": instance}
 
+    def _model_instance_files_lowlevel(self, api: Any, handle) -> Optional[List[Any]]:
+        """최신 버전 번호를 명시해 인스턴스 파일 목록을 조회한다.
+
+        SDK 의 ``model_instance_files`` 는 버전 번호를 비워 보내는데, Kaggle 은
+        존재하는 인스턴스여도 이 요청에 404 를 준다. 다운로드 경로처럼
+        ``model_instance_get`` 으로 버전을 먼저 얻어 넣으면 같은 RPC 가 성공한다.
+
+        SDK 에 저수준 클라이언트가 없으면 ``None`` 을 돌려 기존 경로로 넘긴다.
+        """
+        build_client = getattr(api, "build_kaggle_client", None)
+        if not callable(build_client):
+            return None
+        try:
+            from kagglesdk.models.types.model_api_service import (
+                ApiListModelInstanceVersionFilesRequest,
+            )
+            from kagglesdk.models.types.model_enums import ModelFramework
+        except ImportError:
+            return None
+
+        instance = self._model_instance_get_from_api(api, handle)
+        version_number = (
+            instance.get("versionNumber") or instance.get("version_number")
+            if isinstance(instance, dict)
+            else getattr(instance, "version_number", None)
+            or getattr(instance, "versionNumber", None)
+        )
+        if not version_number:
+            return None
+
+        request = ApiListModelInstanceVersionFilesRequest()
+        request.owner_slug = handle.owner
+        request.model_slug = handle.model
+        request.framework = api.lookup_enum(
+            ModelFramework, ModelFramework.MODEL_FRAMEWORK_API, handle.framework
+        )
+        request.instance_slug = handle.variation
+        request.version_number = version_number
+        request.page_size = 100
+
+        with build_client() as kaggle:
+            client = getattr(getattr(kaggle, "models", None), "model_api_client", None)
+            list_files = getattr(client, "list_model_instance_version_files", None)
+            if not callable(list_files):
+                return None
+            files: List[Any] = []
+            seen_tokens = set()
+            while True:
+                response = list_files(request)
+                files.extend(_response_files(response))
+                next_page_token = _response_next_page_token(response)
+                if not next_page_token or next_page_token in seen_tokens:
+                    return files
+                seen_tokens.add(next_page_token)
+                request.page_token = next_page_token
+
     def _model_instance_files_sync(self, handle) -> List[Any]:
         api = get_kaggle_client()
+        lowlevel_files = self._model_instance_files_lowlevel(api, handle)
+        if lowlevel_files is not None:
+            return lowlevel_files
         handle_str = format_model_id(handle)
         try:
             method = self._sdk_method(
