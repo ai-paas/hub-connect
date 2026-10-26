@@ -2,7 +2,7 @@ import os
 import asyncio
 from pathlib import Path
 import tempfile
-from datetime import timedelta
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import patch, AsyncMock, MagicMock
 
@@ -158,6 +158,7 @@ def test_kaggle_2_model_shape_preserves_json_contract():
             )
         ],
         vote_count=7,
+        publish_time=datetime(2020, 10, 6),
         update_time="2026-06-25T00:00:00",
         tags=[SimpleNamespace(name="nlp")],
     )
@@ -167,6 +168,7 @@ def test_kaggle_2_model_shape_preserves_json_contract():
     assert item["id"] == "google/bert/pyTorch/answer-equivalence-bem"
     assert item["author"] == "google"
     assert item["likes"] == 7
+    assert item["createdAt"] == "2020-10-06T00:00:00"
     assert {"nlp", "pyTorch"} <= set(item["tags"])
 
 

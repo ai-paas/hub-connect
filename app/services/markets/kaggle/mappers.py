@@ -102,6 +102,7 @@ def to_model_item(raw: Any) -> Dict[str, Any]:
         "author": owner,
         "downloads": _get(raw, "downloadCount", 0) or 0,
         "likes": _get(raw, "voteCount", 0) or 0,
+        "createdAt": _iso(_get(raw, "publishTime")),
         "lastModified": _iso(
             _get(raw, "lastUpdateTime")
             or _get(raw, "updateTime")

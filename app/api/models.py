@@ -47,6 +47,7 @@ router = APIRouter(tags=["models"])
         "| lastModified | 마지막 수정 시각입니다. |\n"
         "| pipeline_tag | 대표 태스크 태그입니다. |\n"
         "| tags | 태그 목록입니다. |\n"
+        "| createdAt | (Kaggle 전용) 모델 게시 시각입니다. 값이 없으면 `null`입니다. |\n"
         "| parameterDisplay | 사람이 읽기 쉬운 파라미터 표기입니다. Kaggle은 항상 `null`입니다. |\n"
         "| parameterRange | 파라미터 범주 정보입니다. Kaggle은 항상 `null`입니다. |\n\n"
         "추가 응답 필드 (Kaggle 포함 일부 마켓):\n"
